@@ -13,7 +13,7 @@ class RestoreQubitOrdering(TransformationPass):
     def run(self, dag):
         qreg = dag.qregs['q']
         layout = self.property_set['final_layout']
-        if all(qreg.index(q) == i for i, q in enumerate(layout)):
+        if all(f == i for i, f in enumerate(layout.to_permutation(qreg))):
             return dag
 
         swap_dag = DAGCircuit()
