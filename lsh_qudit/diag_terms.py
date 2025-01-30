@@ -79,7 +79,11 @@ def diag_propagator_circuit(spo, backend, physical_qubits):
     ops_by_weight = defaultdict(list)
     for pauli, coeff in zip(spo.paulis, spo.coeffs):
         pstr = pauli.to_label()
-        ops_by_weight[pstr.count('Z')].append((pstr, coeff.real))
+        try:
+            coeff = coeff.real
+        except AttributeError:
+            pass
+        ops_by_weight[pstr.count('Z')].append((pstr, coeff))
     ops_by_weight[0].clear()
 
     circuits = []

@@ -4,12 +4,13 @@ from qiskit import QuantumCircuit
 from qiskit.circuit.library import RZGate, PhaseGate, XGate, CPhaseGate, CXGate, CCXGate, HGate
 from qiskit.quantum_info import SparsePauliOp
 import cirq
-from qutrit_experiments.gates import X12Gate, P1Gate, P2Gate, RZ12Gate, QGate, XplusGate, XminusGate
+from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, RZ12Gate, QGate, XplusGate,
+                                      XminusGate, QubitQutritCRxPlusPiGate,
+                                      QubitQutritCRxMinusPiGate)
 
 
-def validate_circuit(
+def circuit_unitary(
     circuit: QuantumCircuit,
-    hamiltonian_t: np.ndarray,
     qutrits=(),
     diagonal=False
 ):
@@ -31,11 +32,33 @@ def validate_circuit(
         if gate.params:
             out_circuit.append(cirq_gate(*gate.params).on(*qubits))
         else:
-            out_circuit.append(cirq_gate(*qubits))
+            try:
+                out_circuit.append(cirq_gate.on(*qubits))
+            except ValueError:
+                print(datum)
+                print(cirq_gate)
+                print(qubits)
+                raise
     unitary = out_circuit.unitary(qubit_order=out_qubits[::-1])
+    if diagonal:
+        unitary = np.diagonal(unitary)
+    return unitary
+
+
+def validate_circuit(
+    circuit: QuantumCircuit,
+    hamiltonian_t: np.ndarray,
+    qutrits=(),
+    diagonal=False,
+    result_only=True
+):
+    unitary = circuit_unitary(circuit, qutrits=qutrits)
     target = scipy.linalg.expm(-1.j * hamiltonian_t)
     test = np.einsum('ij,ik->jk', unitary.conjugate(), target)
     is_identity = np.allclose(test * test[0, 0].conjugate(), np.eye(test.shape[0]))
+    if result_only:
+        return is_identity
+
     if diagonal:
         unitary = np.diagonal(unitary)
         target = np.diagonal(target)
@@ -265,8 +288,10 @@ GATE_TRANSLATION = {
     'cx': cirq.CNOT,
     'ccx': cirq.CCNOT,
     'h': cirq.H,
-    'x12': X12GateC,
+    'x12': X12GateC(),
     'q': QGateC,
     'p1': P1GateC,
-    'p2': P2GateC
+    'p2': P2GateC,
+    'qubit_qutrit_crx_pluspi': CXiGateC(),
+    'qubit_qutrit_crx_minuspi': CXiDagGateC()
 }
