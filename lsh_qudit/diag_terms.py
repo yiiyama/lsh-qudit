@@ -3,29 +3,28 @@ from copy import deepcopy
 from collections import defaultdict
 from qiskit import QuantumCircuit
 from qiskit.circuit.library import SwapGate
+from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler import TransformationPass, generate_preset_pass_manager
+from qiskit.transpiler.passes.optimization import InverseCancellation
 
 
 class RestoreQubitOrdering(TransformationPass):
     """Restore qubit ordering after routing."""
     def run(self, dag):
-        swap = SwapGate()
         qreg = dag.qregs['q']
         layout = self.property_set['final_layout']
-        perm = layout.to_permutation(qreg)
-        while True:
-            inv_perm = {initial: final for final, initial in enumerate(perm) if final != initial}
-            if not inv_perm:
-                break
-            min_moved = min(inv_perm.keys())
-            current_pos = inv_perm[min_moved]
-            perm[current_pos] = perm[current_pos - 1]
-            perm[current_pos - 1] = min_moved
-            dag.apply_operation_back(swap, (qreg[current_pos - 1], qreg[current_pos]), (),
-                                     check=False)
-            layout.swap(current_pos - 1, current_pos)
+        if all(qreg.index(q) == i for i, q in enumerate(layout)):
+            return dag
 
-        self.property_set['final_layout'] = layout
+        swap_dag = DAGCircuit()
+        swap_dag.add_qreg(qreg)
+        for node in dag.topological_op_nodes():
+            if node.op.name == 'swap':
+                swap_dag.apply_operation_front(node.op, qargs=node.qargs)
+
+        for node in swap_dag.topological_op_nodes():
+            dag.apply_operation_back(node.op, qargs=node.qargs)
+            layout.swap(*node.qargs)
 
         return dag
 
@@ -33,6 +32,7 @@ class RestoreQubitOrdering(TransformationPass):
 def get_opt3_pm(backend, physical_qubits):
     pm = generate_preset_pass_manager(3, backend, initial_layout=physical_qubits)
     pm.routing.append(RestoreQubitOrdering())  # pylint: disable=no-member
+    pm.routing.append(InverseCancellation([SwapGate()]))  # pylint: disable=no-member
     return pm
 
 
@@ -72,7 +72,7 @@ def _make_sequences(ops_by_weight, op_coeff, circuit):
     return [circuit]
 
 
-def diag_propagator_circuit(spo, backend, physical_qubits):
+def get_all_orderings(spo):
     spo = spo.simplify()
     ops_by_weight = defaultdict(list)
     for pauli, coeff in zip(spo.paulis, spo.coeffs):
@@ -92,6 +92,11 @@ def diag_propagator_circuit(spo, backend, physical_qubits):
     for op_coeff in ops_by_weight[weight]:
         circuits.extend(_make_sequences(ops_by_weight, op_coeff, QuantumCircuit(spo.num_qubits)))
 
+    return circuits
+
+
+def diag_propagator_circuit(spo, backend, physical_qubits):
+    circuits = get_all_orderings(spo)
     print(f'Transpiling {len(circuits)} circuits')
     pm = get_opt3_pm(backend, physical_qubits)
     tcircuits = pm.run(circuits)
