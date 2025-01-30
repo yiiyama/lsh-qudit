@@ -1,17 +1,15 @@
+# pylint: disable=unused-argument, missing-class-docstring
+"""Circuit validation against hermitian / unitary matrices."""
 import numpy as np
 import scipy
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import RZGate, PhaseGate, XGate, CPhaseGate, CXGate, CCXGate, HGate
-from qiskit.quantum_info import SparsePauliOp
-import cirq
-from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, RZ12Gate, QGate, XplusGate,
-                                      XminusGate, QubitQutritCRxPlusPiGate,
-                                      QubitQutritCRxMinusPiGate)
+import cirq  # pylint: disable=import-error
 
 
 def circuit_unitary(
     circuit: QuantumCircuit,
     qutrits=(),
+    ancillae=(),
     diagonal=False
 ):
     # Translate
@@ -20,7 +18,9 @@ def circuit_unitary(
         for qubit in qreg:
             qubit_map[qubit] = len(qubit_map)
 
-    out_qubits = cirq.LineQubit.range(circuit.num_qubits)
+    num_qubits = len(qubit_map)
+
+    out_qubits = cirq.LineQubit.range(num_qubits)
     for iq in qutrits:
         out_qubits[iq] = cirq.LineQid(iq, dimension=3)
 
@@ -39,7 +39,19 @@ def circuit_unitary(
                 print(cirq_gate)
                 print(qubits)
                 raise
+
     unitary = out_circuit.unitary(qubit_order=out_qubits[::-1])
+    if ancillae:
+        shape = tuple(qubit.dimension for qubit in out_qubits[::-1])
+        unitary = unitary.reshape(shape + shape)
+        source = tuple(num_qubits - i - 1 for i in ancillae)
+        source += tuple(2 * num_qubits - i - 1 for i in ancillae)
+        num_anc_axes = len(ancillae) * 2
+        dest = tuple(range(num_anc_axes))
+        unitary = np.moveaxis(unitary, source, dest)
+        unitary = unitary[(0,) * num_anc_axes]
+        new_dim = np.prod(shape) // np.prod([out_qubits[i].dimension for i in ancillae])
+        unitary = unitary.reshape(new_dim, new_dim)
     if diagonal:
         unitary = np.diagonal(unitary)
     return unitary
@@ -47,13 +59,16 @@ def circuit_unitary(
 
 def validate_circuit(
     circuit: QuantumCircuit,
-    hamiltonian_t: np.ndarray,
+    target: np.ndarray,
     qutrits=(),
+    ancillae=(),
+    exponentiate=True,
     diagonal=False,
     result_only=True
 ):
-    unitary = circuit_unitary(circuit, qutrits=qutrits)
-    target = scipy.linalg.expm(-1.j * hamiltonian_t)
+    unitary = circuit_unitary(circuit, qutrits=qutrits, ancillae=ancillae)
+    if exponentiate:
+        target = scipy.linalg.expm(-1.j * target)
     test = np.einsum('ij,ik->jk', unitary.conjugate(), target)
     is_identity = np.allclose(test * test[0, 0].conjugate(), np.eye(test.shape[0]))
     if result_only:

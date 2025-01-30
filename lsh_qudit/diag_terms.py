@@ -1,11 +1,8 @@
+"""Search the optimal order of the diagonal terms."""
 from copy import deepcopy
 from collections import defaultdict
-import numpy as np
-from qiskit import QuantumCircuit, QuantumRegister, transpile
-from qiskit.providers import Backend
-from qiskit.circuit import Parameter
+from qiskit import QuantumCircuit
 from qiskit.circuit.library import SwapGate
-from qiskit.quantum_info import SparsePauliOp as SPO, Operator
 from qiskit.transpiler import TransformationPass, generate_preset_pass_manager
 
 
@@ -35,7 +32,7 @@ class RestoreQubitOrdering(TransformationPass):
 
 def get_opt3_pm(backend, physical_qubits):
     pm = generate_preset_pass_manager(3, backend, initial_layout=physical_qubits)
-    pm.routing.append(RestoreQubitOrdering())
+    pm.routing.append(RestoreQubitOrdering())  # pylint: disable=no-member
     return pm
 
 
@@ -76,6 +73,7 @@ def _make_sequences(ops_by_weight, op_coeff, circuit):
 
 
 def diag_propagator_circuit(spo, backend, physical_qubits):
+    spo = spo.simplify()
     ops_by_weight = defaultdict(list)
     for pauli, coeff in zip(spo.paulis, spo.coeffs):
         pstr = pauli.to_label()
