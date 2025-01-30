@@ -29,6 +29,11 @@ def circuit_unitary(
         gate = datum.operation
         qubits = tuple(out_qubits[qubit_map[q]] for q in datum.qubits)
         cirq_gate = GATE_TRANSLATION[gate.name]
+        if isinstance(cirq_gate, tuple):
+            if qubits[0].x in qutrits:
+                cirq_gate = cirq_gate[1]
+            else:
+                cirq_gate = cirq_gate[0]
         if gate.params:
             out_circuit.append(cirq_gate(*gate.params).on(*qubits))
         else:
@@ -54,6 +59,8 @@ def circuit_unitary(
         unitary = unitary.reshape(new_dim, new_dim)
     if diagonal:
         unitary = np.diagonal(unitary)
+    unitary.real = np.where(np.isclose(unitary.real, 0.), 0., unitary.real)
+    unitary.imag = np.where(np.isclose(unitary.imag, 0.), 0., unitary.imag)
     return unitary
 
 
@@ -69,6 +76,11 @@ def validate_circuit(
     unitary = circuit_unitary(circuit, qutrits=qutrits, ancillae=ancillae)
     if exponentiate:
         target = scipy.linalg.expm(-1.j * target)
+    else:
+        target = target.copy()
+    target.real = np.where(np.isclose(target.real, 0.), 0., target.real)
+    target.imag = np.where(np.isclose(target.imag, 0.), 0., target.imag)
+
     test = np.einsum('ij,ik->jk', unitary.conjugate(), target)
     is_identity = np.allclose(test * test[0, 0].conjugate(), np.eye(test.shape[0]))
     if result_only:
@@ -214,6 +226,21 @@ class QGateC(cirq.Gate):
         return f'Q({self.phi})'
 
 
+class X01GateC(cirq.Gate):
+    def _qid_shape_(self):
+        return (3,)
+
+    def _unitary_(self):
+        return np.array([
+            [0., 1., 0.],
+            [1., 0., 0.],
+            [0., 0., 1.]
+        ])
+
+    def _circuit_diagram_info_(self, args):
+        return 'X01'
+
+
 class X12GateC(cirq.Gate):
     def _qid_shape_(self):
         return (3,)
@@ -259,6 +286,22 @@ class XminusGateC(cirq.Gate):
         return 'X-'
 
 
+class H01GateC(cirq.Gate):
+    def _qid_shape_(self):
+        return (3,)
+
+    def _unitary_(self):
+        v = 1. / np.sqrt(2.)
+        return np.array([
+            [v, v, 0.],
+            [v, -v, 0.],
+            [0., 0., 1.]
+        ])
+
+    def _circuit_diagram_info_(self, args):
+        return 'X01'
+
+
 class CXiGateC(cirq.Gate):
     def _qid_shape_(self):
         return (2, 3)
@@ -296,14 +339,16 @@ class CXiDagGateC(cirq.Gate):
 
 
 GATE_TRANSLATION = {
-    'rz': cirq.rz,
-    'p': PhaseGateC,
-    'x': cirq.X,
+    'rz': (cirq.rz, RZ01GateC),
+    'p': (PhaseGateC, P1GateC),
+    'x': (cirq.X, X01GateC),
     'cp': CPhaseGateC,
     'cx': cirq.CNOT,
     'ccx': cirq.CCNOT,
-    'h': cirq.H,
+    'h': (cirq.H, H01GateC),
     'x12': X12GateC(),
+    'xminus': XminusGateC(),
+    'xplus': XplusGateC(),
     'q': QGateC,
     'p1': P1GateC,
     'p2': P2GateC,

@@ -1,6 +1,7 @@
 """Tools."""
 import numpy as np
 from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp
 
 
 def count_gates(qc: QuantumCircuit):
@@ -34,6 +35,8 @@ def op_matrix(op, shape, qubits):
     idle_dim = np.prod(idle_shape)
     mat = np.zeros((idle_dim, idle_dim, op_dim, op_dim), dtype=np.complex128)
     didx = np.arange(idle_dim)
+    if isinstance(op, SparsePauliOp):
+        op = op.to_matrix()
     mat[didx, didx] = op
     mat = mat.reshape(idle_shape * 2 + op_shape * 2)
     source = tuple(range(-2 * op_nq, 0))
