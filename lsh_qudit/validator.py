@@ -1,5 +1,7 @@
 # pylint: disable=unused-argument, missing-class-docstring
 """Circuit validation against hermitian / unitary matrices."""
+from collections.abc import Sequence
+from typing import Optional
 import numpy as np
 import scipy
 from qiskit import QuantumCircuit
@@ -63,6 +65,7 @@ def circuit_unitary(
 def validate_circuit(
     circuit: QuantumCircuit,
     target: np.ndarray,
+    state_indices: Optional[tuple[Sequence[int]]] = None,
     qutrits=(),
     ancillae=(),
     exponentiate=True,
@@ -77,12 +80,18 @@ def validate_circuit(
     target.real = np.where(np.isclose(target.real, 0.), 0., target.real)
     target.imag = np.where(np.isclose(target.imag, 0.), 0., target.imag)
 
+    if state_indices:
+        shape = tuple(3 if i in qutrits else 2 for i in range(len(circuit.qubits) - 1, -1, -1)
+                      if i not in ancillae)
+        unitary = np.moveaxis(unitary.reshape((-1,) + shape), 0, -1)[state_indices]
+        target = np.moveaxis(target.reshape((-1,) + shape), 0, -1)[state_indices]
+
     test = np.einsum('ij,ik->jk', unitary.conjugate(), target)
     is_identity = np.allclose(test * test[0, 0].conjugate(), np.eye(test.shape[0]))
     if result_only:
         return is_identity
 
-    if diagonal:
+    if diagonal and not state_indices:
         unitary = np.diagonal(unitary)
         target = np.diagonal(target)
 
