@@ -12,13 +12,23 @@ def count_gates(qc: QuantumCircuit):
     return gate_count
 
 
-def remove_idle_wires(qc: QuantumCircuit, inplace=True):
+def remove_idle_wires(qc: QuantumCircuit, inplace=False, flatten=False):
     if not inplace:
         qc = qc.copy()
+
     gate_count = count_gates(qc)
     for qubit, count in gate_count.items():
         if count == 0:
             qc.qubits.remove(qubit)
+
+    if flatten:
+        qubit_map = {qubit: i for i, qubit in enumerate(qc.qubits)}
+        new_circ = QuantumCircuit(len(qubit_map))
+        for datum in qc.data:
+            qubits = [qubit_map[q] for q in datum.qubits]
+            new_circ.append(datum.operation, qubits)
+        qc = new_circ
+
     return qc
 
 

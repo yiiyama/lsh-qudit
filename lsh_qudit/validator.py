@@ -13,12 +13,8 @@ def circuit_unitary(
     diagonal=False
 ):
     # Translate
-    qubit_map = {}
-    for qreg in circuit.qregs:
-        for qubit in qreg:
-            qubit_map[qubit] = len(qubit_map)
-
-    num_qubits = len(qubit_map)
+    qubit_map = {qubit: i for i, qubit in enumerate(circuit.qubits)}
+    num_qubits = len(qubit_map)  # circuit.num_qubits is not reduced after remove_idle_wires
 
     out_qubits = cirq.LineQubit.range(num_qubits)
     for iq in qutrits:
