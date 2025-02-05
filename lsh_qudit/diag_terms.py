@@ -42,15 +42,17 @@ def _make_sequences(ops_by_weight, op_coeff, circuit):
     ops_by_weight = deepcopy(ops_by_weight)
     ops_by_weight[current_weight].remove(op_coeff)
 
-    control = op[::-1].index('Z')
+    control = op.index('Z')
     cxs = []
-    while (target := op[::-1].find('Z', control + 1)) != -1:
-        circuit.cx(control, target)
-        cxs.append((control, target))
+    while (target := op.find('Z', control + 1)) != -1:
+        qc = circuit.num_qubits - control - 1
+        qt = circuit.num_qubits - target - 1
+        circuit.cx(qc, qt)
+        cxs.append((qc, qt))
         control = target
-    circuit.rz(2. * coeff, control)
-    for control, target in cxs[::-1]:
-        circuit.cx(control, target)
+    circuit.rz(2. * coeff, circuit.num_qubits - control - 1)
+    for qc, qt in cxs[::-1]:
+        circuit.cx(qc, qt)
 
     circuits = []
     weight = max(1, current_weight - 1)
