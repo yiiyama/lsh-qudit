@@ -54,3 +54,26 @@ def op_matrix(op, shape, qubits):
     mat = np.moveaxis(mat, source, dest)
     mat = mat.reshape(full_dim, full_dim)
     return mat
+
+
+def physical_states(left_flux=None, right_flux=None):
+    states = np.array(np.unravel_index(np.arange(12 * 12), (2, 2, 3, 2, 2, 3))).T
+    agl_mask = np.equal((1 - states[:, 0]) * states[:, 1] + states[:, 2],
+                        states[:, 3] * (1 - states[:, 4]) + states[:, 5])
+    states = states[agl_mask]
+    if isinstance(left_flux, int):
+        left_flux = (left_flux,)
+    if left_flux:
+        mask = np.zeros(states.shape[0], dtype=bool)
+        for val in left_flux:
+            mask |= np.equal(states[:, 0] * (1 - states[:, 1]) + states[:, 2], val)
+        states = states[mask]
+    if isinstance(right_flux, int):
+        right_flux = (right_flux,)
+    if right_flux:
+        mask = np.zeros(states.shape[0], dtype=bool)
+        for val in right_flux:
+            mask |= np.equal((1 - states[:, 3]) * states[:, 4] + states[:, 5], val)
+        states = states[mask]
+
+    return states
