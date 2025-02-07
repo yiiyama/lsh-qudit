@@ -36,7 +36,8 @@ def get_opt3_pm(backend, physical_qubits):
     return pm
 
 
-def _make_sequences(ops_by_weight, op_coeff, circuit):
+def _make_sequences(ops_by_weight, op_coeff, circuit, indent=0):
+    print(f'{" " * indent}_make_sequences({op_coeff[0]})')
     op, coeff = op_coeff
     current_weight = op.count('Z')
     ops_by_weight = deepcopy(ops_by_weight)
@@ -59,14 +60,14 @@ def _make_sequences(ops_by_weight, op_coeff, circuit):
     while weight > 0 and not ops_by_weight[weight]:
         weight -= 1
     for next_op_coeff in ops_by_weight[weight]:
-        circuits.extend(_make_sequences(ops_by_weight, next_op_coeff, circuit.copy()))
+        circuits.extend(_make_sequences(ops_by_weight, next_op_coeff, circuit.copy(), indent + 1))
     for next_op_coeff in ops_by_weight[current_weight]:
-        circuits.extend(_make_sequences(ops_by_weight, next_op_coeff, circuit.copy()))
+        circuits.extend(_make_sequences(ops_by_weight, next_op_coeff, circuit.copy(), indent + 1))
     weight = current_weight + 1
     while weight <= circuit.num_qubits and not ops_by_weight[weight]:
         weight += 1
     for next_op_coeff in ops_by_weight[weight]:
-        circuits.extend(_make_sequences(ops_by_weight, next_op_coeff, circuit.copy()))
+        circuits.extend(_make_sequences(ops_by_weight, next_op_coeff, circuit.copy(), indent + 1))
 
     if circuits:
         return circuits
@@ -111,3 +112,46 @@ def diag_propagator_circuit(spo, backend, physical_qubits):
             best_circuit = circuit
 
     return best_circuit
+
+
+def _diag_function_sub(num_qubits, angles):
+    circ = QuantumCircuit(num_qubits)
+    if num_qubits == 1:
+        return circ
+
+    circ.compose(_diag_function_sub(num_qubits - 1, angles[::2]),
+                 qubits=list(range(1, num_qubits)), inplace=True)
+
+    if num_qubits == 2:
+        circ.cx(1, 0)
+        circ.rz(angles[3], 0)
+    elif num_qubits == 3:
+        for i1 in range(2):
+            circ.cx(1, 0)
+            circ.cx(2, 1)
+            circ.rz(angles[5 + 2 * i1], 0)
+    elif num_qubits == 4:
+        for i1 in range(2):
+            circ.cx(1, 0)
+            circ.cx(2, 1)
+            circ.cx(3, 2)
+            circ.rz(angles[9 + 4 * i1], 0)
+            circ.cx(1, 0)
+            circ.cx(2, 1)
+            circ.rz(angles[11 + 4 * i1], 0)
+
+    return circ
+
+
+def diag_function(num_qubits, angles):
+    circ = QuantumCircuit(num_qubits)
+
+    for iq in range(num_qubits):
+        circ.rz(angles[2 ** iq], iq)
+
+    for nq in range(2, num_qubits + 1):
+        circ.compose(_diag_function_sub(nq, angles), qubits=list(range(nq)), inplace=True)
+
+    for iq in range(num_qubits - 1):
+        circ.cx(iq + 1, iq)
+    return circ
