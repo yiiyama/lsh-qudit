@@ -12,12 +12,14 @@ def count_gates(qc: QuantumCircuit):
     return gate_count
 
 
-def remove_idle_wires(qc: QuantumCircuit, inplace=False, flatten=False):
+def remove_idle_wires(qc: QuantumCircuit, inplace=False, flatten=False, keep_qubits=None):
     if not inplace:
         qc = qc.copy()
 
     gate_count = count_gates(qc)
     for qubit, count in gate_count.items():
+        if keep_qubits and qubit in keep_qubits:
+            continue
         if count == 0:
             qc.qubits.remove(qubit)
 
@@ -33,6 +35,13 @@ def remove_idle_wires(qc: QuantumCircuit, inplace=False, flatten=False):
 
 
 def op_matrix(op, shape, qubits):
+    """Embed a square matrix op into a larger square matrix given by shape. Essentially a series of
+    np.krons with identity matrices.
+    Args:
+        op: Square matrix.
+        shape: Qudit dimensions from major to minor.
+        qubits: Qubit ids to embed the op into.
+    """
     shape = tuple(shape)
     if isinstance(qubits, int):
         qubits = (qubits,)
@@ -56,8 +65,9 @@ def op_matrix(op, shape, qubits):
     return mat
 
 
-def physical_states(left_flux=None, right_flux=None):
-    states = np.array(np.unravel_index(np.arange(12 * 12), (2, 2, 3, 2, 2, 3))).T
+def physical_states(left_flux=None, right_flux=None, as_multi=False):
+    shape = (2, 2, 3, 2, 2, 3)
+    states = np.array(np.unravel_index(np.arange(np.prod(shape)), shape)).T
     agl_mask = np.equal((1 - states[:, 0]) * states[:, 1] + states[:, 2],
                         states[:, 3] * (1 - states[:, 4]) + states[:, 5])
     states = states[agl_mask]
@@ -76,4 +86,7 @@ def physical_states(left_flux=None, right_flux=None):
             mask |= np.equal((1 - states[:, 3]) * states[:, 4] + states[:, 5], val)
         states = states[mask]
 
-    return states
+    if as_multi:
+        return states
+
+    return np.sum(states * np.cumprod((1,) + shape[-1:0:-1])[None, ::-1], axis=1)
