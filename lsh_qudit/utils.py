@@ -1,7 +1,66 @@
 """Tools."""
 import numpy as np
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import SparsePauliOp
+
+
+class QubitPlacement:
+    """Qubit-occupation number correspondence tracker."""
+    def __init__(self, qubit_labels, swap_history=()):
+        self.qubit_labels = tuple(qubit_labels)
+        self.swap_history = swap_history
+
+    @property
+    def num_qubits(self):
+        return len(self.qubit_labels)
+
+    def swap(self, label1, label2):
+        i1 = self[label1]
+        i2 = self[label2]
+        imin = min(i1, i2)
+        imax = max(i1, i2)
+        qubit_labels = (self.qubit_labels[:imin]
+                        + (self.qubit_labels[imax],)
+                        + self.qubit_labels[imin + 1:imax]
+                        + (self.qubit_labels[imin],)
+                        + self.qubit_labels[imax + 1:])
+        return QubitPlacement(qubit_labels, self.swap_history + ((imin, imax),))
+
+    def __getitem__(self, index):
+        if isinstance(index, tuple):
+            try:
+                return next(i for i, l in enumerate(self.qubit_labels) if l == index)
+            except StopIteration as ex:
+                raise IndexError() from ex
+        if isinstance(index, str):
+            return [i for i, l in enumerate(self.qubit_labels) if l[0] == index]
+        raise IndexError('Invalid index')
+
+
+def sort_qubits(circuit, initial_placement):
+    min_site = min(label[1] for label in initial_placement.qubit_labels)
+    max_site = max(label[1] for label in initial_placement.qubit_labels)
+    qregs = []
+    mapping = [None] * initial_placement.num_qubits
+    for isite in range(max_site, min_site - 1, -1):
+        for name in ['l', 'a', 'o', 'i']:
+            try:
+                i_in = next(i for i, l in enumerate(initial_placement.qubit_labels)
+                            if l == (name, isite))
+            except StopIteration:
+                continue
+
+            mapping[i_in] = len(qregs)
+            qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
+
+    circ = QuantumCircuit(*qregs)
+    circ.compose(circuit, qubits=mapping, inplace=True)
+    return circ
+
+
+def draw_circuit(circuit, initial_placement, *args, **kwargs):
+    circuit = sort_qubits(circuit, initial_placement)
+    return circuit.draw('mpl', *args, reverse_bits=True, **kwargs)
 
 
 def count_gates(qc: QuantumCircuit):

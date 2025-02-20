@@ -358,6 +358,8 @@ GATE_TRANSLATION = {
     'rz': (cirq.rz, RZ01GateC),
     'p': (PhaseGateC, P1GateC),
     'x': (cirq.X, X01GateC),
+    't': cirq.T,
+    'tdg': cirq.ZPowGate(exponent=-0.25),
     'cp': CPhaseGateC,
     'cx': cirq.CNOT,
     'swap': cirq.SWAP,
