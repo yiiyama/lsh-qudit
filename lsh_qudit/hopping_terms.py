@@ -118,68 +118,6 @@ def diag_propagator_circuit(spo, backend, physical_qubits):
     return best_circuit
 
 
-def _full_parity_walk_sub(num_qubits, angles):
-    circ = QuantumCircuit(num_qubits)
-    if num_qubits == 1:
-        return circ
-
-    circ.compose(_full_parity_walk_sub(num_qubits - 1, angles[::2]),
-                 qubits=list(range(1, num_qubits)), inplace=True)
-
-    if num_qubits == 2:
-        circ.cx(1, 0)
-        circ.rz(2. * angles[3], 0)
-    elif num_qubits == 3:
-        for i1 in range(2):
-            circ.cx(1, 0)
-            circ.cx(2, 1)
-            circ.rz(2. * angles[5 + 2 * i1], 0)
-    elif num_qubits == 4:
-        for i1 in range(2):
-            circ.cx(1, 0)
-            circ.cx(2, 1)
-            circ.cx(3, 2)
-            circ.rz(2. * angles[9 + 4 * i1], 0)
-            circ.cx(1, 0)
-            circ.cx(2, 1)
-            circ.rz(2. * angles[11 + 4 * i1], 0)
-
-    return circ
-
-
-def full_parity_walk(num_qubits, angles):
-    circ = QuantumCircuit(num_qubits)
-
-    for iq in range(num_qubits):
-        circ.rz(2. * angles[2 ** iq], iq)
-
-    for nq in range(2, num_qubits + 1):
-        circ.compose(_full_parity_walk_sub(nq, angles), qubits=list(range(nq)), inplace=True)
-
-    for iq in range(num_qubits - 1):
-        circ.cx(iq + 1, iq)
-    return circ
-
-
-def trace_parity(circuit):
-    nq = circuit.num_qubits
-    parity = np.eye(nq, dtype=bool)
-    visited = set(2 ** np.arange(nq))
-    for datum in circuit.data:
-        if datum.operation.name == 'cx':
-            ctrl = circuit.find_bit(datum.qubits[0]).index
-            targ = circuit.find_bit(datum.qubits[1]).index
-            parity[targ] ^= parity[ctrl]
-            visited.add(np.sum(parity[targ] * (2 ** np.arange(nq))))
-        elif datum.operation.name == 'swap':
-            q1 = circuit.find_bit(datum.qubits[0]).index
-            q2 = circuit.find_bit(datum.qubits[1]).index
-            tmp = np.array(parity[q2])
-            parity[q2] = parity[q1]
-            parity[q1] = tmp
-    return parity, visited
-
-
 sqrt2 = np.sqrt(2.)
 sqrt3 = np.sqrt(3.)
 
@@ -189,9 +127,29 @@ p0 = SparsePauliOp(['I', 'Z'], [0.5, 0.5])
 p1 = SparsePauliOp(['I', 'Z'], [0.5, -0.5])
 
 
+def hi1r0_svd():
+    # i0-i1-l1-o1
+    # i0-i1-o1-l1
+    circ = QuantumCircuit(4)
+    # Relative-phase Toffoli on i1-l1-o1
+    circ.h(2)
+    circ.t(2)
+    circ.cx(1, 2)
+    circ.tdg(2)
+    circ.cx(3, 2)
+    circ.t(2)
+    circ.cx(1, 0)  # This is not a part of Toffoli but is inserted here for depth efficiency
+    circ.cx(1, 2)
+    circ.tdg(2)
+    circ.swap(2, 3)
+    circ.cp(np.pi / 2., 1, 2)
+    circ.h(2)
+    circ.h(1)
+    return circ
+
+
 def hi1r0_diag(interaction_x, time_step):
-    # o0-i0-i1-o1
-    #          l1
+    # i0-i1-o1-l1
     # -P1_i(0) Z_i(1) ( √2*P0_o(1) I_l(1) + P1_o(1) P0_l(1) )
     spo = -p1.tensor(pauliz).tensor(
         sqrt2 * p0.tensor(paulii) + p1.tensor(p0)
