@@ -267,29 +267,16 @@ def hopping_term(
     qp=None
 ):
     config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, flags, filtered_states = config
-
-    if qp is None:
-        labels = ["x"]
-        if not ('no_decrementer_p' in flags and len(np.unique(filtered_states["p"])) == 1):
-            labels.append("p")
-            if 'decrement_p_by_X' not in flags:
-                labels.append("pd")
-        labels += ["x'", "y'"]
-        if not ('no_decrementer_q' in flags and len(np.unique(filtered_states["q"])) == 1):
-            labels.append("q")
-            if 'decrement_q_by_X' not in flags:
-                labels.append("qd")
-        labels += ["y"]
-        qp = QubitPlacement([qubit_labels[lab] for lab in labels])
 
     usvd_circuit, init_p, final_p = hopping_usvd(term_type, site, config=config, qp=qp)
-    diag_circuit = hopping_diagonal_term(time_step, interaction_x, config=config, qp=qp)[0]
+    diag_circuit = hopping_diagonal_term(term_type, site, time_step, interaction_x, config=config,
+                                         qp=final_p)[0]
 
-    circuit = QuantumCircuit(qp.num_qubits)
-    circuit.compose(usvd_circuit, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
-    circuit.compose(diag_circuit, qubits=[qp[lab] for lab in final_p.qubit_labels], inplace=True)
-    circuit.compose(usvd_circuit.inverse(), qubits=[qp[lab] for lab in final_p.qubit_labels],
+    circuit = QuantumCircuit(init_p.num_qubits)
+    circuit.compose(usvd_circuit, inplace=True)
+    circuit.compose(diag_circuit, qubits=[init_p[lab] for lab in final_p.qubit_labels],
+                    inplace=True)
+    circuit.compose(usvd_circuit.inverse(), qubits=[init_p[lab] for lab in final_p.qubit_labels],
                     inplace=True)
 
     return circuit, qp, qp
@@ -310,17 +297,7 @@ def hopping_usvd(
         qubit_labels, flags = config[:2]
 
     if qp is None:
-        labels = ["x"]
-        if 'no_decrementer_p' not in flags:
-            labels.append("p")
-            if 'decrement_p_by_X' not in flags:
-                labels.append("pd")
-        labels += ["x'", "y'"]
-        if 'no_decrementer_q' not in flags:
-            labels.append("q")
-            if 'decrement_q_by_X' not in flags:
-                labels.append("qd")
-        labels += ["y"]
+        labels = ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
         qp = QubitPlacement([qubit_labels[lab] for lab in labels])
 
     init_p = qp
@@ -334,13 +311,13 @@ def hopping_usvd(
     elif 'decrement_q_by_X' in flags:
         circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
     else:
-        circuit.compose(ccix, qubits=[qpl("y'"), qpl("y"), qpl("qa")], inplace=True)
-        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("qa"), qpl("q")])
-        circuit.append(XminusGate(), [qpl("q")])
-        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("qa"), qpl("q")])
-        circuit.append(XplusGate(), [qpl("q")])
-        circuit.rz(-0.5 * np.pi, qpl("qa"))
-        circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("qa")], inplace=True)
+        circuit.compose(ccix, qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
+        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("q"), qpl("qd")])
+        circuit.append(XminusGate(), [qpl("qd")])
+        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("q"), qpl("qd")])
+        circuit.append(XplusGate(), [qpl("qd")])
+        circuit.rz(-0.5 * np.pi, qpl("q"))
+        circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
 
     if 'no_decrementer_p' in flags:
         circuit.cx(qpl("y'"), qpl("x'"))
@@ -372,6 +349,8 @@ def hopping_usvd(
 def hopping_diagonal_term(
     term_type,
     site,
+    time_step,
+    interaction_x,
     left_flux=None,
     right_flux=None,
     config=None,
@@ -389,9 +368,15 @@ def hopping_diagonal_term(
     mask_yp = transformed_states["y'"] == 1
     transformed_states["x'"][mask_yp] = 1 - transformed_states["x'"][mask_yp]
     mask = mask_yp & (transformed_states["y"] == 1)
-    transformed_states["q"][mask] = (transformed_states["q"][mask] - 1) % BT
+    if 'decrement_q_by_X' in flags:
+        transformed_states["q"][mask] = 1 - transformed_states["q"][mask]
+    else:
+        transformed_states["q"][mask] = (transformed_states["q"][mask] - 1) % BT
     mask = mask_yp & (transformed_states["x"] == 0)
-    transformed_states["p"][mask] = (transformed_states["p"][mask] - 1) % BT
+    if 'decrement_p_by_X' in flags:
+        transformed_states["p"][mask] = 1 - transformed_states["p"][mask]
+    else:
+        transformed_states["p"][mask] = (transformed_states["p"][mask] - 1) % BT
 
     # Which degrees of freedom will have qubits assigned?
     dofs = []
@@ -404,16 +389,27 @@ def hopping_diagonal_term(
         dofs.append("q")
 
     # Construct the full diagonal op as a tensor
+    # Dims: y, q, x', y', p, x
     # Start with the diagonal function
-    op = np.array(diag_fn).transpose(2, 1, 0)
-    # Apply the p projector
-    if "p" in dofs:
-        if 'decrement_p_by_X' in flags:
-            op[:, 1:, 0] = 0.
-        else:
-            op[:, -1, 0] = 0.
+    diag_op = diag_fn.transpose(2, 1, 0)
+    diag_op = np.tile(diag_op[:, None, None, None, :, :], (1, BT, 2, 2, 1, 1))
+    # p projector
+    if 'decrement_p_by_X' in flags:
+        diag_op[..., 1:, 0] = 0.
+    else:
+        diag_op[..., -1, 0] = 0.
+    # q projector
+    if 'decrement_q_by_X' in flags:
+        diag_op[1, 1:] = 0.
+    else:
+        diag_op[1, -1] = 0.
     # Zx
-    op[:, :, 1] *= -1.
+    diag_op[..., 1] *= -1.
+    # |1)(1|x'
+    diag_op[:, :, 0] = 0.
+    # Zy'
+    diag_op[:, :, :, 1] *= -1.
+
     # Project out non-dof dimensions
     indices = (
         unique_states["y"][0] if len(unique_states["y"]) == 1 else slice(None),
@@ -463,6 +459,8 @@ def hopping_diagonal_term(
         qp = QubitPlacement([qubit_labels[lab] for lab in labels])
 
     circuit = QuantumCircuit(qp.num_qubits)
+
+    return 0, 1, 2
 
 
 def hopping_usvd_old(term_type, left_flux=None, right_flux=None, qp=None):
