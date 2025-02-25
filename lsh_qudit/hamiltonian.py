@@ -1,3 +1,4 @@
+from copy import deepcopy
 import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter
@@ -56,9 +57,11 @@ cziy.tdg(2)
 cziy.cp(np.pi / 2., 1, 0)
 cziy.h(2)
 
-hopping_shape = (2, 2, 3, 2, 2, 3)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
-diag_fn = np.sqrt((np.arange(3)[None, :, None] + np.arange(1, 3)[:, None, None])
-                  / (np.arange(3)[None, :, None] + np.arange(1, 3)[None, None, :]))
+BT = 3
+
+hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
+diag_fn = np.sqrt((np.arange(BT)[None, :, None] + np.arange(1, 3)[:, None, None])
+                  / (np.arange(BT)[None, :, None] + np.arange(1, 3)[None, None, :]))
 hi1_mat = op_matrix(np.diagflat(diag_fn), hopping_shape, (4, 3, 1))
 hi1_mat = op_matrix(cincr, hopping_shape, (1, 0)) @ hi1_mat
 hi1_mat = op_matrix(ocincr, hopping_shape, (4, 3)) @ hi1_mat
@@ -143,27 +146,27 @@ def ele3_b_bulk_term(sites, time_step, qp=None):
     #     X12 - CX01 - X12
     if qp is None:
         qp = QubitPlacement([('i', site) for site in sites] + [('o', site) for site in sites]
-                            + [('l', site) for site in sites] + [('a', site) for site in sites])
+                            + [('l', site) for site in sites] + [('d', site) for site in sites])
 
     circuit = QuantumCircuit(4 * len(sites))
     circuit.x(qp['i'])
     for site in sites:
-        circuit.compose(ccix, qubits=[qp['i', site], qp['o', site], qp['a', site]],
+        circuit.compose(ccix, qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
 
     for site in sites:
-        circuit.append(X12Gate(), [qp['l', site]])
-        circuit.append(QubitQutritCRxPlusPiGate(), [qp['a', site], qp['l', site]])
-        circuit.append(X12Gate(), [qp['l', site]])
-        circuit.append(QGate(0.25 * time_step), [qp['l', site]])
-        circuit.append(X12Gate(), [qp['l', site]])
-        circuit.append(QubitQutritCRxMinusPiGate(), [qp['a', site], qp['l', site]])
-        circuit.append(X12Gate(), [qp['l', site]])
-        circuit.append(QGate(-0.25 * time_step), [qp['l', site]])
-        circuit.rz(-0.5 * time_step, qp['a', site])
+        circuit.append(X12Gate(), [qp['d', site]])
+        circuit.append(QubitQutritCRxPlusPiGate(), [qp['l', site], qp['d', site]])
+        circuit.append(X12Gate(), [qp['d', site]])
+        circuit.append(QGate(0.25 * time_step), [qp['d', site]])
+        circuit.append(X12Gate(), [qp['d', site]])
+        circuit.append(QubitQutritCRxMinusPiGate(), [qp['l', site], qp['d', site]])
+        circuit.append(X12Gate(), [qp['d', site]])
+        circuit.append(QGate(-0.25 * time_step), [qp['d', site]])
+        circuit.rz(-0.5 * time_step, qp['l', site])
 
     for site in sites:
-        circuit.compose(ccix.inverse(), qubits=[qp['i', site], qp['o', site], qp['a', site]],
+        circuit.compose(ccix.inverse(), qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
 
     circuit.x(qp['i'])
@@ -180,21 +183,28 @@ def hopping_states(hopping_type, left_flux=None, right_flux=None, as_multi=True)
     return physical_states(left_flux=left_flux, right_flux=right_flux, as_multi=as_multi)[mask]
 
 
-def diagonal_function_entries(hopping_type, left_flux=None, right_flux=None):
-    states = hopping_states(hopping_type, left_flux=left_flux, right_flux=right_flux)
-    if hopping_type == 1:
-        occ_numbers = np.unique(states[:, [2, 1, 4]], axis=0)
-    else:
-        occ_numbers = np.unique(states[:, [5, 3, 0]], axis=0)
-    values = np.sqrt((occ_numbers[:, 0] + 1 + occ_numbers[:, 1])
-                     / (occ_numbers[:, 0] + 1 + occ_numbers[:, 2]))
-    entries = np.zeros((3, 2, 2))
-    entries[tuple(occ_numbers.T)] = values
-    return entries
-
-
 def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
-    """Return the x, y, p, q indices and simplifications."""
+    """Return the x, y, p, q indices and simplifications.
+
+    Lattice boundary conditions can impose certain constraints on the available LSH flux from the
+    left or the right. Certain simplifications to U_SVD are possible depending on the resulting
+    reductions of the matrix elements.
+
+    To check for simplifications, we first identify the physical states (satisfying the Gauss's law
+    and the boundary conditions) with non-coinciding n_i(r) and n_i(r+1). Then, within the list of
+    such states,
+
+    - If n_l(r) is 0 or 1 with 1 occurring only when n_i(r+1)=1, the decrementer is replaced with X,
+      and the o(r)-l(r) projector is replaced with [|0)(0|_l(r)]^{1-n_o(r)}.
+    - Similarly, if n_l(r+1) is 0 or 1 with 1 occurring only when n_i(r+1)=1, the decrementer is
+      replaced with X, and the o(r+1)-l(r+1) projector is replaced with [|0)(0|_l(r+1)]^{n_o(r+1)}.
+    - Excluding states with (n_i, n_o, n_l)_{r+1}=(1, 1, 0) or (0, 0, Lambda), if n_o(r) is
+      identically 1, the n_i(r+1)-n_o(r) controlled decrementer and the corresponding projector are
+      replaced with identity.
+    - Similarly, excluding states with (n_i(r+1), n_o(r), n_l(r))=(1, 0, 0) or (0, 1, Lambda), if
+      n_o(r+1) is identically 0, the n_i(r+1)-n_o(r+1) controlled decrementer and the corresponding
+      projector are replaced with identity.
+    """
     if term_type == 1:
         qubit_labels = {
             "x'": ('i', site),
@@ -203,8 +213,8 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             "y": ('o', site + 1),
             "p": ('l', site),
             "q": ('l', site + 1),
-            "pa": ('a', site),
-            "qa": ('a', site + 1)
+            "pd": ('d', site),
+            "qd": ('d', site + 1)
         }
         idx = {"x'": 0, "x": 1, "y'": 3, "y": 4, "p": 2, "q": 5}
     else:
@@ -215,13 +225,10 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             "y": ('i', site),
             "p": ('l', site + 1),
             "q": ('l', site),
-            "pa": ('a', site + 1),
-            "qa": ('a', site)
+            "pd": ('d', site + 1),
+            "qd": ('d', site)
         }
         idx = {"x'": 4, "x": 3, "y'": 1, "y": 0, "p": 5, "q": 2}
-
-    if left_flux is None and right_flux is None:
-        return qubit_labels, []
 
     gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, as_multi=True)
     states = gl_states[gl_states[:, idx["x'"]] != gl_states[:, idx["y'"]]]
@@ -235,17 +242,17 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
         flags.append('decrement_p_by_X')
     if np.all(occnum("q") < 2) and not np.any((occnum("q") == 1) & (occnum("y'") == 0)):
         flags.append('decrement_q_by_X')
-    mask = (occnum("y'") == 1) & (occnum("y") == 1) & (occnum("q") == 0)
-    mask |= (occnum("y'") == 0) & (occnum("y") == 0) & (occnum("q") == 2)
-    filtered_states = states[np.logical_not(mask)]
-    if np.all(filtered_states[:, idx["x"]] == 1):
+    mask_q = (occnum("y'") == 1) & (occnum("y") == 1) & (occnum("q") == 0)
+    mask_q |= (occnum("y'") == 0) & (occnum("y") == 1) & (occnum("q") == BT - 1)
+    mask_p = (occnum("y'") == 1) & (occnum("x") == 0) & (occnum("p") == 0)
+    mask_p |= (occnum("y'") == 0) & (occnum("x") == 0) & (occnum("p") == BT - 1)
+    if np.all(states[np.logical_not(mask_q), idx["x"]] == 1):
         flags.append('no_decrementer_p')
-    else:
-        mask = (occnum("y'") == 1) & (occnum("x") == 0) & (occnum("p") == 0)
-        mask |= (occnum("y'") == 0) & (occnum("x") == 1) & (occnum("p") == 2)
-        filtered_states = states[np.logical_not(mask)]
-        if np.all(filtered_states[:, idx["y"]] == 0):
-            flags.append('no_decrementer_q')
+    elif np.all(states[np.logical_not(mask_p), idx["y"]] == 0):
+        flags.append('no_decrementer_q')
+
+    states = states[np.logical_not(mask_p | mask_q)]
+    filtered_states = {key: states[:, value] for key, value in idx.items()}
 
     return qubit_labels, flags, filtered_states
 
@@ -259,21 +266,31 @@ def hopping_term(
     right_flux=None,
     qp=None
 ):
-    qubit_labels, flags, filtered_states = hopping_term_config(term_type, site,
-                                                               left_flux=left_flux,
-                                                               right_flux=right_flux)
-    if qp is None:
-        qp = QubitPlacement()
+    config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+    qubit_labels, flags, filtered_states = config
 
-    usvd_circuit, init_p, final_p = hopping_usvd(term_type, site, qubit_labels=qubit_labels,
-                                                 flags=flags, qp=qp)
-    diag_circuit = hopping_diagonal_term(time_step, interaction_x, qubit_labels=qubit_labels,
-                                         flags=flags, filtered_states=filtered_states, qp=final_p)
+    if qp is None:
+        labels = ["x"]
+        if not ('no_decrementer_p' in flags and len(np.unique(filtered_states["p"])) == 1):
+            labels.append("p")
+            if 'decrement_p_by_X' not in flags:
+                labels.append("pd")
+        labels += ["x'", "y'"]
+        if not ('no_decrementer_q' in flags and len(np.unique(filtered_states["q"])) == 1):
+            labels.append("q")
+            if 'decrement_q_by_X' not in flags:
+                labels.append("qd")
+        labels += ["y"]
+        qp = QubitPlacement([qubit_labels[lab] for lab in labels])
+
+    usvd_circuit, init_p, final_p = hopping_usvd(term_type, site, config=config, qp=qp)
+    diag_circuit = hopping_diagonal_term(time_step, interaction_x, config=config, qp=qp)[0]
 
     circuit = QuantumCircuit(qp.num_qubits)
-    circuit.compose(usvd_circuit, qubits=[], inplace=True)
-    circuit.compose(diag_circuit, qubits=[], inplace=True)
-    circuit.compose(usvd_circuit.inverse(), qubits=[], inplace=True)
+    circuit.compose(usvd_circuit, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
+    circuit.compose(diag_circuit, qubits=[qp[lab] for lab in final_p.qubit_labels], inplace=True)
+    circuit.compose(usvd_circuit.inverse(), qubits=[qp[lab] for lab in final_p.qubit_labels],
+                    inplace=True)
 
     return circuit, qp, qp
 
@@ -283,23 +300,28 @@ def hopping_usvd(
     site,
     left_flux=None,
     right_flux=None,
-    qubit_labels=None,
-    flags=None,
+    config=None,
     qp=None
 ):
-    if qubit_labels is None:
-        qubit_labels, flags, _ = hopping_term_config(term_type, site,
-                                                     left_flux=left_flux, right_flux=right_flux)
+    if config is None:
+        qubit_labels, flags = hopping_term_config(term_type, site,
+                                                  left_flux=left_flux, right_flux=right_flux)[:2]
+    else:
+        qubit_labels, flags = config[:2]
 
     if qp is None:
-        labels = ["x", "p"]
-        if 'decrement_p_by_X' not in flags:
-            labels.append("pa")
-        labels += ["x'", "y'", "q"]
-        if 'decrement_q_by_X' not in flags:
-            labels.append("qa")
+        labels = ["x"]
+        if 'no_decrementer_p' not in flags:
+            labels.append("p")
+            if 'decrement_p_by_X' not in flags:
+                labels.append("pd")
+        labels += ["x'", "y'"]
+        if 'no_decrementer_q' not in flags:
+            labels.append("q")
+            if 'decrement_q_by_X' not in flags:
+                labels.append("qd")
         labels += ["y"]
-        qp = QubitPlacement([qubit_labels[l] for l in labels])
+        qp = QubitPlacement([qubit_labels[lab] for lab in labels])
 
     init_p = qp
 
@@ -333,13 +355,13 @@ def hopping_usvd(
         if 'decrement_p_by_X' in flags:
             circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         else:
-            circuit.compose(ccix, qubits=[qpl("y'"), qpl("x"), qpl("pa")], inplace=True)
-            circuit.append(QubitQutritCRxMinusPiGate(), [qpl("pa"), qpl("p")])
-            circuit.append(XminusGate(), [qpl("p")])
-            circuit.append(QubitQutritCRxMinusPiGate(), [qpl("pa"), qpl("p")])
-            circuit.append(XplusGate(), [qpl("p")])
-            circuit.rz(-0.5 * np.pi, qpl("pa"))
-            circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("pa")], inplace=True)
+            circuit.compose(ccix, qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
+            circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
+            circuit.append(XminusGate(), [qpl("pd")])
+            circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
+            circuit.append(XplusGate(), [qpl("pd")])
+            circuit.rz(-0.5 * np.pi, qpl("p"))
+            circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("p")], inplace=True)
         circuit.x(qpl("x"))
 
     circuit.h(qpl("y'"))
@@ -352,29 +374,95 @@ def hopping_diagonal_term(
     site,
     left_flux=None,
     right_flux=None,
-    qubit_labels=None,
-    flags=None,
-    filtered_states=None,
+    config=None,
     qp=None
 ):
-    if qubit_labels is None:
+    if config is None:
         qubit_labels, flags, filtered_states = hopping_term_config(term_type, site,
                                                                    left_flux=left_flux,
                                                                    right_flux=right_flux)
+    else:
+        qubit_labels, flags, filtered_states = config
 
+    # Pass the filtered states through the decrementers in Usvd
+    transformed_states = deepcopy(filtered_states)
+    mask_yp = transformed_states["y'"] == 1
+    transformed_states["x'"][mask_yp] = 1 - transformed_states["x'"][mask_yp]
+    mask = mask_yp & (transformed_states["y"] == 1)
+    transformed_states["q"][mask] = (transformed_states["q"][mask] - 1) % BT
+    mask = mask_yp & (transformed_states["x"] == 0)
+    transformed_states["p"][mask] = (transformed_states["p"][mask] - 1) % BT
+
+    # Which degrees of freedom will have qubits assigned?
+    dofs = []
+    unique_states = {}
+    for label in ["p", "x", "y"]:
+        unique_states[label] = np.unique(transformed_states[label])
+        if len(unique_states[label]) > 1:
+            dofs.append(label)
+    if len(np.unique(transformed_states["q"])) > 1 and 'decrement_q_by_X' in flags:
+        dofs.append("q")
+
+    # Construct the full diagonal op as a tensor
+    # Start with the diagonal function
+    op = np.array(diag_fn).transpose(2, 1, 0)
+    # Apply the p projector
+    if "p" in dofs:
+        if 'decrement_p_by_X' in flags:
+            op[:, 1:, 0] = 0.
+        else:
+            op[:, -1, 0] = 0.
+    # Zx
+    op[:, :, 1] *= -1.
+    # Project out non-dof dimensions
+    indices = (
+        unique_states["y"][0] if len(unique_states["y"]) == 1 else slice(None),
+        unique_states["p"][0] if len(unique_states["p"]) == 1 else slice(None),
+        unique_states["x"][0] if len(unique_states["x"]) == 1 else slice(None)
+    )
+    if "q" in dofs:
+        op = np.repeat(op[None, ...], BT, axis=0)
+        # q is in dofs only when decrementing q by X
+        op[1:, 1] = 0.
+        indices = (slice(None),) + indices
+    op = op[indices]
+
+    # Convert the op to Pauli products
+    if np.all(transformed_states["p"] < 2) and np.all(transformed_states["q"] < 2):
+        nq = len(op.shape)
+        indices = (slice(0, 2),) * nq
+        op = op[indices]
+
+        selections = (np.arange(2 ** nq)[:, None] >> np.arange(nq)[None, ::-1]) % 2
+        paulis = np.array([[1, 1], [1, -1]])[selections]
+        args = sum(([paulis[:, i], (0, i + 1)] for i in range(nq)), [])
+        args.append(list(range(nq + 1)))
+        pfilter = np.einsum(*args).reshape(2 ** nq, 2 ** nq)
+        angles = {''.join('IZ'[b] for b in sel): np.tensordot(fil, op.reshape(-1), (1, 0))
+                  for sel, fil in zip(selections, pfilter)}
+    else:
+        raise NotImplementedError('Qudit diagonals')
+
+    # Construct the circuit
     if qp is None:
-        labels = ["x", "p"]
-        if 'decrement_p_by_X' not in flags:
-            labels.append("pa")
-        labels += ["y'", "x'", "q"]
-        if 'decrement_q_by_X' not in flags:
-            labels.append("qa")
-        labels += ["y"]
-        qp = QubitPlacement([qubit_labels[l] for l in labels])
+        labels = []
+        if "x" in dofs:
+            labels.append("x")
+        if "p" in dofs:
+            labels.append("p")
+            if np.any(transformed_states["p"] > 1):
+                labels.append("pd")
+        labels += ["y'", "x'"]
+        if "q" in dofs:
+            labels.append("q")
+            if np.any(transformed_states["q"] > 1):
+                labels.append("qd")
+        if "y" in dofs:
+            labels.append("y")
 
-    # Determine constantness of x, y, and p from filtered_states
-    # Compute the full diagonal op including the diagonal func, and construct the circuit depending
-    # on the total weight
+        qp = QubitPlacement([qubit_labels[lab] for lab in labels])
+
+    circuit = QuantumCircuit(qp.num_qubits)
 
 
 def hopping_usvd_old(term_type, left_flux=None, right_flux=None, qp=None):
