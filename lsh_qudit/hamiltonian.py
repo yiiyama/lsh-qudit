@@ -348,7 +348,7 @@ def hopping_usvd(
 ):
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, decr_ops = config[:2]
+    qubit_labels, boson_ops = config[:2]
 
     if qp is None:
         labels = ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
@@ -360,9 +360,9 @@ def hopping_usvd(
         return qp[qubit_labels[label]]
 
     circuit = QuantumCircuit(init_p.num_qubits)
-    if decr_ops['q'] == 'id':
+    if boson_ops['q'][0] == 'id':
         pass
-    elif decr_ops['q'] == 'X':
+    elif boson_ops['q'][0] == 'X':
         circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
     else:
         circuit.compose(ccix, qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
@@ -373,7 +373,7 @@ def hopping_usvd(
         circuit.rz(-0.5 * np.pi, qpl("q"))
         circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
 
-    if decr_ops['p'] == 'id':
+    if boson_ops['p'][0] == 'id':
         circuit.cx(qpl("y'"), qpl("x'"))
     else:
         # circuit.cx(qpl("y'"), qpl("x'"))
@@ -383,7 +383,7 @@ def hopping_usvd(
         qp = qp.swap(qubit_labels["y'"], qubit_labels["x'"])
 
         circuit.x(qpl("x"))
-        if decr_ops['p'] == 'X':
+        if boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         else:
             circuit.compose(ccix, qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
@@ -410,11 +410,18 @@ def hopping_diagonal_term(
     config=None,
     qp=None
 ):
-    # TODO Logic surrounding decr_ops / proj_ops - HI1 r=1 does not agree with the specialized function
+    """Construct the circuit for the diagonal term.
 
+    Using the hopping term config for the given boundary condition, identify the qubits that appear
+    in the circuit, compute the Z rotation angles, and compose the parity network circuit.
+
+    TODO need to be able to select whether to express diag_op in p or q. As it is now, we are expressing
+    in p and tiling in q, which is simply wrong. If we don't have X decrementers n_p and n_q are fully
+    in synch. Perhaps pass diag_op through the usvd_states construction together to move the entries?
+    """
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, decr_ops, proj_ops, gl_states, indices = config
+    qubit_labels, boson_ops, gl_states, indices = config
 
     # Construct the full diagonal op as a tensor
     # Start with the diagonal function
@@ -422,21 +429,17 @@ def hopping_diagonal_term(
     diag_op = np.moveaxis(diag_op, (0, 1, 2, 3), (indices[x] for x in ["p", "x", "y", "q"]))
     # p projector
     diag_op = np.moveaxis(diag_op, (indices["p"], indices["x"]), (0, 1))
-    if proj_ops['p'] == 'id':
-        pass
-    elif proj_ops['p'] == 'zero':
-        diag_op[1:, 0] = 0.
-    else:
+    if boson_ops['p'][1] == 'Lambda':
         diag_op[-1, 0] = 0.
+    elif boson_ops['p'][1] == 'zero':
+        diag_op[1:, 0] = 0.
     diag_op = np.moveaxis(diag_op, (0, 1), (indices["p"], indices["x"]))
     diag_op = np.moveaxis(diag_op, (indices["q"], indices["y"]), (0, 1))
     # q projector
-    if proj_ops['q'] == 'id':
-        pass
-    elif proj_ops['q'] == 'zero':
-        diag_op[1:, 1] = 0.
-    else:
+    if boson_ops['q'][1] == 'Lambda':
         diag_op[-1, 1] = 0.
+    elif boson_ops['q'][1] == 'zero':
+        diag_op[1:, 1] = 0.
     diag_op = np.moveaxis(diag_op, (0, 1), (indices["q"], indices["y"]))
     # Zx
     diag_op = np.moveaxis(diag_op, indices["x"], 0)
@@ -458,180 +461,91 @@ def hopping_diagonal_term(
     idx = indices["x'"]
     states[mask_yp, idx] *= -1
     states[mask_yp, idx] += 1
-    if decr_ops['q'] != 'id':
-        mask = mask_yp & (states[:, indices["y"]] == 1)
-        idx = indices["q"]
-        if decr_ops['q'] == 'lambda':
-            states[mask, idx] -= 1
-            states[mask, idx] %= BT
-        elif decr_ops['q'] == 'X':
-            states[mask, idx] *= -1
-            states[mask, idx] += 1
-    if decr_ops['p'] != 'id':
-        mask = mask_yp & (states[:, indices["x"]] == 0)
-        idx = indices["p"]
-        if decr_ops['p'] == 'lambda':
-            states[mask, idx] -= 1
-            states[mask, idx] %= BT
-        elif decr_ops['p'] == 'X':
-            states[mask, idx] *= -1
-            states[mask, idx] += 1
+    mask = mask_yp & (states[:, indices["y"]] == 1)
+    idx = indices["q"]
+    if boson_ops['q'][0] == 'lambda':
+        states[mask, idx] -= 1
+        states[mask, idx] %= BT
+    elif boson_ops['q'][0] == 'X':
+        states[mask, idx] *= -1
+        states[mask, idx] += 1
+    mask = mask_yp & (states[:, indices["x"]] == 0)
+    idx = indices["p"]
+    if boson_ops['p'][0] == 'lambda':
+        states[mask, idx] -= 1
+        states[mask, idx] %= BT
+    elif boson_ops['p'][0] == 'X':
+        states[mask, idx] *= -1
+        states[mask, idx] += 1
 
     usvd_states = states.copy()
     usvd_states[:, indices["y'"]] *= -1
     usvd_states[:, indices["y'"]] += 1
     usvd_states = np.unique(np.concatenate([states, usvd_states], axis=0), axis=0)
 
-    # Identify the degrees of freedom and simplify the diagonal op as necessary
-    qubits = {"y'"}
-    op_dims = dict(indices)
-
-    # Select states with n_x'=1
-    gather = np.nonzero(states[:, indices["x'"]] == 1)[0]
-    if gather.shape[0] == 0:
-        # Return identity circuit
-        pass
-    unique = np.unique(states[:, indices["x'"]])
-    if unique.shape[0] > 1:
-        states = states[gather]
-        qubits.add("x'")
-    else:
-        # If unique, the value must be 1
-        diag_op = np.moveaxis(diag_op, op_dims["x'"], 0)[1]
-        for key in list(op_dims.keys()):
-            if op_dims[key] > op_dims["x'"]:
-                op_dims[key] -= 1
-        op_dims.pop("x'")
-
-    boson_dofs = [('x', 1, 'p')]
-    if np.all(states[:, indices["p"]] == states[:, indices["q"]]):
-        boson_dofs.append(('y', 0, 'p'))
-        # Take the p-q diagonals and eliminate the q axis
-        diag_op = np.moveaxis(diag_op, (op_dims["p"], op_dims["q"]), (0, 1))
-        diag_op = diag_op[np.arange(BT), np.arange(BT)]
-        diag_op = np.moveaxis(diag_op, 0, op_dims["p"])
-        for key in list(op_dims.keys()):
-            if op_dims[key] > op_dims["q"]:
-                op_dims[key] -= 1
-        op_dims.pop("q")
-    else:
-        boson_dofs.append(('y', 0, 'q'))
-
-    for ctl, val, dof in boson_dofs:
-        if decr_ops[dof] == 'lambda':
-            gather = np.nonzero((states[:, indices[ctl]] == val)
-                                | (states[:, indices[dof]] != BT - 1))[0]
-        elif decr_ops[dof] == 'X':
-            gather = np.nonzero((states[:, indices[ctl]] == val)
-                                | (states[:, indices[dof]] == 0))[0]
-        if gather.shape[0] == 0:
-            # Return identity
-            pass
-        unique = np.unique(states[:, indices[dof]])
-        if unique.shape[0] > 1:
-            states = states[gather]
-            qubits.add(dof)
-        elif dof in op_dims:
-            diag_op = np.moveaxis(diag_op, op_dims[dof], 0)[unique[0]]
-            for key in list(op_dims.keys()):
-                if op_dims[key] > op_dims[dof]:
-                    op_dims[key] -= 1
-            op_dims.pop(dof)
-
-    for dof in ['x', 'y']:
-        unique = np.unique(states[:, indices[dof]])
-        if unique.shape[0] > 1:
-            qubits.add(dof)
+    # Apply the projectors to identify post-projection degrees of freedom
+    qubits = ["x'", "y'"]
+    states = states[states[:, indices["x'"]] == 1]
+    for boson, fermion, cval in [('p', 'x', 0), ('q', 'y', 1)]:
+        if boson_ops[boson][1] == 'id':
+            continue
+        qubits.append(boson)
+        mask = states[:, indices[fermion]] == cval
+        if boson_ops[boson][1] == 'Lambda':
+            mask &= states[:, indices[boson]] == BT - 1
+            states = states[~mask]
         else:
-            diag_op = np.moveaxis(diag_op, op_dims[dof], 0)[unique[0]]
-            for key in list(op_dims.keys()):
-                if op_dims[key] > op_dims[dof]:
-                    op_dims[key] -= 1
-            op_dims.pop(dof)
+            mask &= states[:, indices[boson]] != 0
+            states = states[~mask]
+    for label in ["x", "y"]:
+        if np.unique(states[:, indices[label]]).shape[0] > 1:
+            qubits.append(label)
 
-    # Which degrees of freedom will have qubits assigned?
-    dofs = []
-    unique_states = {}
-    for label in ["p", "x", "y"]:
-        unique_states[label] = np.unique(input_states[label])
-        if len(unique_states[label]) > 1:
-            dofs.append(label)
-    if len(np.unique(input_states["q"])) > 1 and 'decrement_q_by_X' in flags:
-        dofs.append("q")
+    op_dims = [key for key in sorted(indices, key=lambda k: indices[k])]
+    for dim in ['p', 'q']:
+        if boson_ops[dim][1] == 'id':
+            # Remove dimension
+            idim = next(i for i, n in enumerate(op_dims) if n == dim)
+            diag_op = np.moveaxis(diag_op, idim, 0)[unique[0]]
+            op_dims.remove(dim)
 
-    # Construct the full diagonal op as a tensor
-    # Dims: y, q, x', y', p, x
-    # Start with the diagonal function
-    diag_op = diag_fn.transpose(2, 1, 0)
-    diag_op = np.tile(diag_op[:, None, None, None, :, :], (1, BT, 2, 2, 1, 1))
-    # p projector
-    if 'decrement_p_by_X' in flags:
-        diag_op[..., 1:, 0] = 0.
-    else:
-        diag_op[..., -1, 0] = 0.
-    # q projector
-    if 'decrement_q_by_X' in flags:
-        diag_op[1, 1:] = 0.
-    else:
-        diag_op[1, -1] = 0.
-    # Zx
-    diag_op[..., 1] *= -1.
-    # |1)(1|x'
-    diag_op[:, :, 0] = 0.
-    # Zy'
-    diag_op[:, :, :, 1] *= -1.
-
-    # Project out non-dof dimensions
-    indices = (
-        unique_states["y"][0] if len(unique_states["y"]) == 1 else slice(None),
-        unique_states["p"][0] if len(unique_states["p"]) == 1 else slice(None),
-        unique_states["x"][0] if len(unique_states["x"]) == 1 else slice(None)
-    )
-    if "q" in dofs:
-        op = np.repeat(op[None, ...], BT, axis=0)
-        # q is in dofs only when decrementing q by X
-        op[1:, 1] = 0.
-        indices = (slice(None),) + indices
-    op = op[indices]
+    for dim in ['x', 'y']:
+        unique = np.unique(states[:, indices[dim]])
+        if unique.shape[0] == 1:
+            # Remove dimension
+            idim = next(i for i, n in enumerate(op_dims) if n == dim)
+            diag_op = np.moveaxis(diag_op, idim, 0)[unique[0]]
+            op_dims.remove(dim)
 
     # Convert the op to Pauli products
-    if np.all(input_states["p"] < 2) and np.all(input_states["q"] < 2):
-        nq = len(op.shape)
-        indices = (slice(0, 2),) * nq
-        op = op[indices]
+    boson_occnums = {}
+    for boson in ['p', 'q']:
+        if boson_ops[boson][1] == 'id':
+            boson_occnums[boson] = np.unique(states[:, indices[boson]])
+        else:
+            boson_occnums[boson] = np.unique(usvd_states[:, indices[boson]])
 
-        selections = (np.arange(2 ** nq)[:, None] >> np.arange(nq)[None, ::-1]) % 2
-        paulis = np.array([[1, 1], [1, -1]])[selections]
-        args = sum(([paulis[:, i], (0, i + 1)] for i in range(nq)), [])
-        args.append(list(range(nq + 1)))
-        pfilter = np.einsum(*args).reshape(2 ** nq, 2 ** nq)
-        angles = {''.join('IZ'[b] for b in sel): np.tensordot(fil, op.reshape(-1), (1, 0))
-                  for sel, fil in zip(selections, pfilter)}
+    if np.all(boson_occnums['p'] < 2) and np.all(boson_occnums['q'] < 2):
+        iz = np.array([[1., 1.], [1., -1.]]) / 2.
+        for idim in range(diag_op.ndim):
+            diag_op = np.moveaxis(diag_op, idim, 0)[:2]
+            diag_op = np.moveaxis(np.tensordot(iz, diag_op, (1, 0)), 0, idim)
     else:
         raise NotImplementedError('Qudit diagonals')
 
     # Construct the circuit
     if qp is None:
-        labels = []
-        if "x" in dofs:
-            labels.append("x")
-        if "p" in dofs:
-            labels.append("p")
-            if np.any(input_states["p"] > 1):
-                labels.append("pd")
-        labels += ["y'", "x'"]
-        if "q" in dofs:
-            labels.append("q")
-            if np.any(input_states["q"] > 1):
-                labels.append("qd")
-        if "y" in dofs:
-            labels.append("y")
-
-        qp = QubitPlacement([qubit_labels[lab] for lab in labels])
+        qp = QubitPlacement([qubit_labels[lab] for lab in op_dims])
 
     circuit = QuantumCircuit(qp.num_qubits)
+    if qp.num_qubits == 4:
+        pass
+    elif qp.num_qubits == 5:
+        pass
+    else:
+        pass
 
-    return 0, 1, 2
+    return circuit, qp, qp
 
 
 def hopping_usvd_old(term_type, left_flux=None, right_flux=None, qp=None):
