@@ -60,9 +60,9 @@ cziy.h(2)
 BT = 3
 
 hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
-diag_fn = np.sqrt((np.arange(BT)[None, :, None] + np.arange(1, 3)[:, None, None])
-                  / (np.arange(BT)[None, :, None] + np.arange(1, 3)[None, None, :]))
-hi1_mat = op_matrix(np.diagflat(diag_fn), hopping_shape, (4, 3, 1))
+diag_fn = np.sqrt((np.arange(BT)[:, None, None] + np.arange(1, 3)[None, :, None])
+                  / (np.arange(BT)[:, None, None] + np.arange(1, 3)[None, None, :]))
+hi1_mat = op_matrix(np.diagflat(diag_fn), hopping_shape, (3, 4, 1))
 hi1_mat = op_matrix(cincr, hopping_shape, (1, 0)) @ hi1_mat
 hi1_mat = op_matrix(ocincr, hopping_shape, (4, 3)) @ hi1_mat
 hi1_mat = op_matrix(sigmaminus, hopping_shape, 2) @ hi1_mat
@@ -194,10 +194,15 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
     and the boundary conditions) with non-coinciding n_i(r) and n_i(r+1). Then, within the list of
     such states,
 
-    - If n_l(r) is 0 or 1 with 1 occurring only when n_i(r+1)=1, the decrementer is replaced with X,
-      and the o(r)-l(r) projector is replaced with [|0)(0|_l(r)]^{1-n_o(r)}.
-    - Similarly, if n_l(r+1) is 0 or 1 with 1 occurring only when n_i(r+1)=1, the decrementer is
-      replaced with X, and the o(r+1)-l(r+1) projector is replaced with [|0)(0|_l(r+1)]^{n_o(r+1)}.
+    - If n_l(r) is 0 or 1 with n_o(r)=0, n_l(r)=1 occurring only when n_i(r+1)=1, the decrementer is
+      replaced with X, and the o(r)-l(r) projector is replaced with [|0)(0|_l(r)]^{1-n_o(r)}.
+    - Similarly, if n_l(r+1) is 0 or 1 with n_o(r+1)=1, n_l(r+1)=1 occurring only when n_i(r+1)=1,
+      the decrementer is replaced with X, and the o(r+1)-l(r+1) projector is replaced with
+      [|0)(0|_l(r+1)]^{n_o(r+1)}.
+    - If n_o(r)=0, n_l(r)=Lambda never happens in the diagonal term, the projector is replaced with
+      identity.
+    - If n_o(r+1)=1, n_l(r+1)=Lambda never happens in the diagonal term, the projector is replaced
+      with identity.
     - Excluding states with (n_i, n_o, n_l)_{r+1}=(1, 1, 0) or (0, 0, Lambda), if n_o(r) is
       identically 1, the n_i(r+1)-n_o(r) controlled decrementer and the corresponding projector are
       replaced with identity.
@@ -232,29 +237,107 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
 
     gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, as_multi=True)
     states = gl_states[gl_states[:, idx["x'"]] != gl_states[:, idx["y'"]]]
+    states_preproj = states
 
-    def occnum(label):
-        return states[:, idx[label]]
+    def occnum(label, filt=None):
+        if filt is None:
+            return states[:, idx[label]]
+        return states[filt, idx[label]]
 
-    flags = []
+    # Default: decrement p and q by lambda and project |Lambda) out
+    decr_ops = {'p': 'lambda', 'q': 'lambda'}
+    proj_ops = {'p': 'Lambda', 'q': 'Lambda'}
+    bconfs = [('p', 'x', 0), ('q', 'y', 1)]
+    # Check for simplifications following the projection on the other side
+    results = []
+    for iproj in [0, 1]:
+        states = states_preproj.copy()
+        proj = bconfs[iproj]
+        test = bconfs[1 - iproj]
 
-    if np.all(occnum("p") < 2) and not np.any((occnum("p") == 1) & (occnum("y'") == 0)):
-        flags.append('decrement_p_by_X')
-    if np.all(occnum("q") < 2) and not np.any((occnum("q") == 1) & (occnum("y'") == 0)):
-        flags.append('decrement_q_by_X')
-    mask_q = (occnum("y'") == 1) & (occnum("y") == 1) & (occnum("q") == 0)
-    mask_q |= (occnum("y'") == 0) & (occnum("y") == 1) & (occnum("q") == BT - 1)
-    mask_p = (occnum("y'") == 1) & (occnum("x") == 0) & (occnum("p") == 0)
-    mask_p |= (occnum("y'") == 0) & (occnum("x") == 0) & (occnum("p") == BT - 1)
-    if np.all(states[np.logical_not(mask_q), idx["x"]] == 1):
-        flags.append('no_decrementer_p')
-    elif np.all(states[np.logical_not(mask_p), idx["y"]] == 0):
-        flags.append('no_decrementer_q')
+        cyp = occnum("y'") == 1
+        cf = occnum(proj[1]) == proj[2]
+        if np.all(occnum(proj[0], cf) < 2) and np.all(occnum(proj[0], ~cyp & cf) == 0):
+            # Special case of l=0,1
+            proj_side = ('X', 'zero')
+        else:
+            proj_side = ('lambda', 'Lambda')
 
-    states = states[np.logical_not(mask_p | mask_q)]
-    filtered_states = {key: states[:, value] for key, value in idx.items()}
+        mask = ~((cyp & cf & (occnum(proj[0]) == 0)) | (~cyp & cf & (occnum(proj[0]) == BT - 1)))
+        if np.all(mask):
+            proj_side = (proj_side[0], 'id')
+        else:
+            states = states[mask]
 
-    return qubit_labels, flags, filtered_states
+        cyp = occnum("y'") == 1
+        cf = occnum(test[1]) == test[2]
+        if not np.any(cf):
+            test_side = ('id', 'id')
+            results.append((proj_side, test_side))
+            continue
+
+        if np.all(occnum(test[0], cf) < 2) and np.all(occnum(test[0], ~cyp & cf) == 0):
+            # Special case of l=0,1
+            test_side = ('X', 'zero')
+        else:
+            test_side = ('lambda', 'Lambda')
+
+        mask = ~((cyp & cf & (occnum(test[0]) == 0)) | (~cyp & cf & (occnum(test[0]) == BT - 1)))
+        if np.all(mask):
+            test_side = (test_side[0], 'id')
+
+        results.append((proj_side, test_side))
+
+    # Evaluate and select the better site to project on according to the following score matrix:
+    #                test
+    #  |    |id-id X-id λ-id X-0 λ-Λ
+    # p|X-id|    0    2    3   6   9
+    # r|λ-id|    1    3    4   7  10
+    # o|X-0 |    5    6    7  11  12
+    # j|λ-Λ |    8    9   10  12  13
+    scores = []
+    for result in results:
+        match result:
+            case (('X', 'id'), ('id', 'id')):
+                score = 0
+            case (('lambda', 'id'), ('id', 'id')):
+                score = 1
+            case (('X', 'id'), ('X', 'id')):
+                score = 2
+            case (('lambda', 'id'), ('X', 'id')) | (('X', 'id'), ('lambda', 'id')):
+                score = 3
+            case (('lambda', 'id'), ('lambda', 'id')):
+                score = 4
+            case (('X', 'zero'), ('id', 'id')):
+                score = 5
+            case (('X', 'zero'), ('X', 'id')) | (('X', 'id'), ('X', 'zero')):
+                score = 6
+            case (('X', 'zero'), ('lambda', 'id')) | (('lambda', 'id'), ('X', 'zero')):
+                score = 7
+            case (('lambda', 'Lambda'), ('id', 'id')):
+                score = 8
+            case (('lambda', 'Lambda'), ('X', 'id')) | (('X', 'id'), ('lambda', 'Lambda')):
+                score = 9
+            case (('lambda', 'Lambda'), ('lambda', 'id')) | (('lambda', 'id'), ('lambda', 'Lambda')):
+                score = 10
+            case (('X', 'zero'), ('X', 'zero')):
+                score = 11
+            case (('lambda', 'Lambda'), ('X', 'zero')) | (('X', 'zero'), ('lambda', 'Lambda')):
+                score = 12
+            case (('lambda', 'Lambda'), ('lambda', 'Lambda')):
+                score = 13
+            case _:
+                raise ValueError('typo?')
+        scores.append(score)
+
+    if scores[0] <= scores[1]:
+        decr_ops['p'], proj_ops['p'] = results[0][0]
+        decr_ops['q'], proj_ops['q'] = results[0][1]
+    else:
+        decr_ops['p'], proj_ops['p'] = results[1][1]
+        decr_ops['q'], proj_ops['q'] = results[1][0]
+
+    return qubit_labels, decr_ops, proj_ops, gl_states, idx
 
 
 def hopping_term(
@@ -291,10 +374,8 @@ def hopping_usvd(
     qp=None
 ):
     if config is None:
-        qubit_labels, flags = hopping_term_config(term_type, site,
-                                                  left_flux=left_flux, right_flux=right_flux)[:2]
-    else:
-        qubit_labels, flags = config[:2]
+        config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+    qubit_labels, decr_ops = config[:2]
 
     if qp is None:
         labels = ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
@@ -306,9 +387,9 @@ def hopping_usvd(
         return qp[qubit_labels[label]]
 
     circuit = QuantumCircuit(init_p.num_qubits)
-    if 'no_decrementer_q' in flags:
+    if decr_ops['q'] == 'id':
         pass
-    elif 'decrement_q_by_X' in flags:
+    elif decr_ops['q'] == 'X':
         circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
     else:
         circuit.compose(ccix, qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
@@ -319,7 +400,7 @@ def hopping_usvd(
         circuit.rz(-0.5 * np.pi, qpl("q"))
         circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
 
-    if 'no_decrementer_p' in flags:
+    if decr_ops['p'] == 'id':
         circuit.cx(qpl("y'"), qpl("x'"))
     else:
         # circuit.cx(qpl("y'"), qpl("x'"))
@@ -329,7 +410,7 @@ def hopping_usvd(
         qp = qp.swap(qubit_labels["y'"], qubit_labels["x'"])
 
         circuit.x(qpl("x"))
-        if 'decrement_p_by_X' in flags:
+        if decr_ops['p'] == 'X':
             circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         else:
             circuit.compose(ccix, qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
@@ -356,36 +437,153 @@ def hopping_diagonal_term(
     config=None,
     qp=None
 ):
-    if config is None:
-        qubit_labels, flags, filtered_states = hopping_term_config(term_type, site,
-                                                                   left_flux=left_flux,
-                                                                   right_flux=right_flux)
-    else:
-        qubit_labels, flags, filtered_states = config
+    # TODO Logic surrounding decr_ops / proj_ops - HI1 r=1 does not agree with the specialized function
 
-    # Pass the filtered states through the decrementers in Usvd
-    transformed_states = deepcopy(filtered_states)
-    mask_yp = transformed_states["y'"] == 1
-    transformed_states["x'"][mask_yp] = 1 - transformed_states["x'"][mask_yp]
-    mask = mask_yp & (transformed_states["y"] == 1)
-    if 'decrement_q_by_X' in flags:
-        transformed_states["q"][mask] = 1 - transformed_states["q"][mask]
+    if config is None:
+        config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+    qubit_labels, decr_ops, proj_ops, gl_states, indices = config
+
+    # Construct the full diagonal op as a tensor
+    # Start with the diagonal function
+    diag_op = np.tile(diag_fn[..., None, None, None], (1, 1, 1, BT, 2, 2))
+    diag_op = np.moveaxis(diag_op, (0, 1, 2, 3), (indices[x] for x in ["p", "x", "y", "q"]))
+    # p projector
+    diag_op = np.moveaxis(diag_op, (indices["p"], indices["x"]), (0, 1))
+    if proj_ops['p'] == 'id':
+        pass
+    elif proj_ops['p'] == 'zero':
+        diag_op[1:, 0] = 0.
     else:
-        transformed_states["q"][mask] = (transformed_states["q"][mask] - 1) % BT
-    mask = mask_yp & (transformed_states["x"] == 0)
-    if 'decrement_p_by_X' in flags:
-        transformed_states["p"][mask] = 1 - transformed_states["p"][mask]
+        diag_op[-1, 0] = 0.
+    diag_op = np.moveaxis(diag_op, (0, 1), (indices["p"], indices["x"]))
+    diag_op = np.moveaxis(diag_op, (indices["q"], indices["y"]), (0, 1))
+    # q projector
+    if proj_ops['q'] == 'id':
+        pass
+    elif proj_ops['q'] == 'zero':
+        diag_op[1:, 1] = 0.
     else:
-        transformed_states["p"][mask] = (transformed_states["p"][mask] - 1) % BT
+        diag_op[-1, 1] = 0.
+    diag_op = np.moveaxis(diag_op, (0, 1), (indices["q"], indices["y"]))
+    # Zx
+    diag_op = np.moveaxis(diag_op, indices["x"], 0)
+    diag_op[1] *= -1.
+    diag_op = np.moveaxis(diag_op, 0, indices["x"])
+    # |1)(1|x'
+    diag_op = np.moveaxis(diag_op, indices["x'"], 0)
+    diag_op[0] = 0.
+    diag_op = np.moveaxis(diag_op, 0, indices["x'"])
+    # Zy'
+    diag_op = np.moveaxis(diag_op, indices["y'"], 0)
+    diag_op[1] *= -1.
+    diag_op = np.moveaxis(diag_op, 0, indices["y'"])
+
+    # Pass the Gauss's law-satisfying states through the decrementers in Usvd
+    states = gl_states.copy()
+    idx = indices["y'"]
+    mask_yp = states[:, idx] == 1
+    idx = indices["x'"]
+    states[mask_yp, idx] *= -1
+    states[mask_yp, idx] += 1
+    if decr_ops['q'] != 'id':
+        mask = mask_yp & (states[:, indices["y"]] == 1)
+        idx = indices["q"]
+        if decr_ops['q'] == 'lambda':
+            states[mask, idx] -= 1
+            states[mask, idx] %= BT
+        elif decr_ops['q'] == 'X':
+            states[mask, idx] *= -1
+            states[mask, idx] += 1
+    if decr_ops['p'] != 'id':
+        mask = mask_yp & (states[:, indices["x"]] == 0)
+        idx = indices["p"]
+        if decr_ops['p'] == 'lambda':
+            states[mask, idx] -= 1
+            states[mask, idx] %= BT
+        elif decr_ops['p'] == 'X':
+            states[mask, idx] *= -1
+            states[mask, idx] += 1
+
+    usvd_states = states.copy()
+    usvd_states[:, indices["y'"]] *= -1
+    usvd_states[:, indices["y'"]] += 1
+    usvd_states = np.unique(np.concatenate([states, usvd_states], axis=0), axis=0)
+
+    # Identify the degrees of freedom and simplify the diagonal op as necessary
+    qubits = {"y'"}
+    op_dims = dict(indices)
+
+    # Select states with n_x'=1
+    gather = np.nonzero(states[:, indices["x'"]] == 1)[0]
+    if gather.shape[0] == 0:
+        # Return identity circuit
+        pass
+    unique = np.unique(states[:, indices["x'"]])
+    if unique.shape[0] > 1:
+        states = states[gather]
+        qubits.add("x'")
+    else:
+        # If unique, the value must be 1
+        diag_op = np.moveaxis(diag_op, op_dims["x'"], 0)[1]
+        for key in list(op_dims.keys()):
+            if op_dims[key] > op_dims["x'"]:
+                op_dims[key] -= 1
+        op_dims.pop("x'")
+
+    boson_dofs = [('x', 1, 'p')]
+    if np.all(states[:, indices["p"]] == states[:, indices["q"]]):
+        boson_dofs.append(('y', 0, 'p'))
+        # Take the p-q diagonals and eliminate the q axis
+        diag_op = np.moveaxis(diag_op, (op_dims["p"], op_dims["q"]), (0, 1))
+        diag_op = diag_op[np.arange(BT), np.arange(BT)]
+        diag_op = np.moveaxis(diag_op, 0, op_dims["p"])
+        for key in list(op_dims.keys()):
+            if op_dims[key] > op_dims["q"]:
+                op_dims[key] -= 1
+        op_dims.pop("q")
+    else:
+        boson_dofs.append(('y', 0, 'q'))
+
+    for ctl, val, dof in boson_dofs:
+        if decr_ops[dof] == 'lambda':
+            gather = np.nonzero((states[:, indices[ctl]] == val)
+                                | (states[:, indices[dof]] != BT - 1))[0]
+        elif decr_ops[dof] == 'X':
+            gather = np.nonzero((states[:, indices[ctl]] == val)
+                                | (states[:, indices[dof]] == 0))[0]
+        if gather.shape[0] == 0:
+            # Return identity
+            pass
+        unique = np.unique(states[:, indices[dof]])
+        if unique.shape[0] > 1:
+            states = states[gather]
+            qubits.add(dof)
+        elif dof in op_dims:
+            diag_op = np.moveaxis(diag_op, op_dims[dof], 0)[unique[0]]
+            for key in list(op_dims.keys()):
+                if op_dims[key] > op_dims[dof]:
+                    op_dims[key] -= 1
+            op_dims.pop(dof)
+
+    for dof in ['x', 'y']:
+        unique = np.unique(states[:, indices[dof]])
+        if unique.shape[0] > 1:
+            qubits.add(dof)
+        else:
+            diag_op = np.moveaxis(diag_op, op_dims[dof], 0)[unique[0]]
+            for key in list(op_dims.keys()):
+                if op_dims[key] > op_dims[dof]:
+                    op_dims[key] -= 1
+            op_dims.pop(dof)
 
     # Which degrees of freedom will have qubits assigned?
     dofs = []
     unique_states = {}
     for label in ["p", "x", "y"]:
-        unique_states[label] = np.unique(transformed_states[label])
+        unique_states[label] = np.unique(input_states[label])
         if len(unique_states[label]) > 1:
             dofs.append(label)
-    if len(np.unique(transformed_states["q"])) > 1 and 'decrement_q_by_X' in flags:
+    if len(np.unique(input_states["q"])) > 1 and 'decrement_q_by_X' in flags:
         dofs.append("q")
 
     # Construct the full diagonal op as a tensor
@@ -424,7 +622,7 @@ def hopping_diagonal_term(
     op = op[indices]
 
     # Convert the op to Pauli products
-    if np.all(transformed_states["p"] < 2) and np.all(transformed_states["q"] < 2):
+    if np.all(input_states["p"] < 2) and np.all(input_states["q"] < 2):
         nq = len(op.shape)
         indices = (slice(0, 2),) * nq
         op = op[indices]
@@ -446,12 +644,12 @@ def hopping_diagonal_term(
             labels.append("x")
         if "p" in dofs:
             labels.append("p")
-            if np.any(transformed_states["p"] > 1):
+            if np.any(input_states["p"] > 1):
                 labels.append("pd")
         labels += ["y'", "x'"]
         if "q" in dofs:
             labels.append("q")
-            if np.any(transformed_states["q"] > 1):
+            if np.any(input_states["q"] > 1):
                 labels.append("qd")
         if "y" in dofs:
             labels.append("y")
@@ -573,7 +771,7 @@ def hi1_diag_term(interaction_x, time_step, left_flux=None, right_flux=None, qp=
     if np.all(np.equal(outcome_indices[mask, 2], 0)):
         # If all doubly-controlled states had l(r)=0, we skip the decrementer & incrementer in the
         # SVD circuits altogether and therefore not apply any projection in the diagonal either.
-        lr_proj = 'none'
+        lr_proj = 'id'
     elif np.all(np.equal(outcome_indices[mask, 2], 1)):
         # If all doubly-controlled states had l(r)=1, we use an X instead of lambda-. We then have
         # to project on l(r)=0.
@@ -586,7 +784,7 @@ def hi1_diag_term(interaction_x, time_step, left_flux=None, right_flux=None, qp=
     if np.all(np.equal(outcome_indices[mask, 5], 0)):
         # If all doubly-controlled states had l(r+1)=0, we skip the decrementer & incrementer in the
         # SVD circuits altogether and therefore not apply any projection in the diagonal either.
-        lrp1_proj = 'none'
+        lrp1_proj = 'id'
     elif np.all(np.equal(outcome_indices[mask, 5], 1)):
         # If all doubly-controlled states had l(r+1)=1, we use an X instead of lambda-. We then have
         # to project on l(r)=0.
