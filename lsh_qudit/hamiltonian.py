@@ -245,48 +245,47 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
         return states[filt, idx[label]]
 
     # Default: decrement p and q by lambda and project |Lambda) out
-    decr_ops = {'p': 'lambda', 'q': 'lambda'}
-    proj_ops = {'p': 'Lambda', 'q': 'Lambda'}
-    bconfs = [('p', 'x', 0), ('q', 'y', 1)]
+    controls = {'p': ('x', 0), 'q': ('y', 1)}
     # Check for simplifications following the projection on the other side
-    results = []
-    for iproj in [0, 1]:
+    ops_candidates = []
+    for pboson in ['p', 'q']:
         states = states_preproj.copy()
-        proj = bconfs[iproj]
-        test = bconfs[1 - iproj]
+        tboson = 'q' if pboson == 'p' else 'p'
+        pfermion, pval = controls[pboson]
+        tfermion, tval = controls[tboson]
 
         cyp = occnum("y'") == 1
-        cf = occnum(proj[1]) == proj[2]
-        if np.all(occnum(proj[0], cf) < 2) and np.all(occnum(proj[0], ~cyp & cf) == 0):
+        cf = occnum(pfermion) == pval
+        if np.all(occnum(pboson, cf) < 2) and np.all(occnum(pboson, ~cyp & cf) == 0):
             # Special case of l=0,1
-            proj_side = ('X', 'zero')
+            ops = {pboson: ('X', 'zero')}
         else:
-            proj_side = ('lambda', 'Lambda')
+            ops = {pboson: ('lambda', 'Lambda')}
 
-        mask = ~((cyp & cf & (occnum(proj[0]) == 0)) | (~cyp & cf & (occnum(proj[0]) == BT - 1)))
+        mask = ~((cyp & cf & (occnum(pboson) == 0)) | (~cyp & cf & (occnum(pboson) == BT - 1)))
         if np.all(mask):
-            proj_side = (proj_side[0], 'id')
+            ops[pboson] = (ops[pboson][0], 'id')
         else:
             states = states[mask]
 
         cyp = occnum("y'") == 1
-        cf = occnum(test[1]) == test[2]
+        cf = occnum(tfermion) == tval
         if not np.any(cf):
-            test_side = ('id', 'id')
-            results.append((proj_side, test_side))
+            ops[tboson] = ('id', 'id')
+            ops_candidates.append(ops)
             continue
 
-        if np.all(occnum(test[0], cf) < 2) and np.all(occnum(test[0], ~cyp & cf) == 0):
+        if np.all(occnum(tboson, cf) < 2) and np.all(occnum(tboson, ~cyp & cf) == 0):
             # Special case of l=0,1
-            test_side = ('X', 'zero')
+            ops[tboson] = ('X', 'zero')
         else:
-            test_side = ('lambda', 'Lambda')
+            ops[tboson] = ('lambda', 'Lambda')
 
-        mask = ~((cyp & cf & (occnum(test[0]) == 0)) | (~cyp & cf & (occnum(test[0]) == BT - 1)))
+        mask = ~((cyp & cf & (occnum(tboson) == 0)) | (~cyp & cf & (occnum(tboson) == BT - 1)))
         if np.all(mask):
-            test_side = (test_side[0], 'id')
+            ops[tboson] = (ops[tboson][0], 'id')
 
-        results.append((proj_side, test_side))
+        ops_candidates.append(ops)
 
     # Evaluate and select the better site to project on according to the following score matrix:
     #                test
@@ -295,49 +294,23 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
     # r|λ-id|    1    3    4   7  10
     # o|X-0 |    5    6    7  11  12
     # j|λ-Λ |    8    9   10  12  13
-    scores = []
-    for result in results:
-        match result:
-            case (('X', 'id'), ('id', 'id')):
-                score = 0
-            case (('lambda', 'id'), ('id', 'id')):
-                score = 1
-            case (('X', 'id'), ('X', 'id')):
-                score = 2
-            case (('lambda', 'id'), ('X', 'id')) | (('X', 'id'), ('lambda', 'id')):
-                score = 3
-            case (('lambda', 'id'), ('lambda', 'id')):
-                score = 4
-            case (('X', 'zero'), ('id', 'id')):
-                score = 5
-            case (('X', 'zero'), ('X', 'id')) | (('X', 'id'), ('X', 'zero')):
-                score = 6
-            case (('X', 'zero'), ('lambda', 'id')) | (('lambda', 'id'), ('X', 'zero')):
-                score = 7
-            case (('lambda', 'Lambda'), ('id', 'id')):
-                score = 8
-            case (('lambda', 'Lambda'), ('X', 'id')) | (('X', 'id'), ('lambda', 'Lambda')):
-                score = 9
-            case (('lambda', 'Lambda'), ('lambda', 'id')) | (('lambda', 'id'), ('lambda', 'Lambda')):
-                score = 10
-            case (('X', 'zero'), ('X', 'zero')):
-                score = 11
-            case (('lambda', 'Lambda'), ('X', 'zero')) | (('X', 'zero'), ('lambda', 'Lambda')):
-                score = 12
-            case (('lambda', 'Lambda'), ('lambda', 'Lambda')):
-                score = 13
-            case _:
-                raise ValueError('typo?')
-        scores.append(score)
-
-    if scores[0] <= scores[1]:
-        decr_ops['p'], proj_ops['p'] = results[0][0]
-        decr_ops['q'], proj_ops['q'] = results[0][1]
+    op_combs = [('id', 'id'), ('X', 'id'), ('lambda', 'id'), ('X', 'zero'), ('lambda', 'Lambda')]
+    proj_keys = {c: i for i, c in enumerate(op_combs[1:])}
+    test_keys = {c: i for i, c in enumerate(op_combs)}
+    scores = [
+        [0, 2, 3, 6, 9],
+        [1, 3, 4, 7, 10],
+        [5, 6, 7, 11, 12],
+        [8, 9, 10, 12, 13]
+    ]
+    s0 = scores[proj_keys[ops_candidates[0]['p']]][test_keys[ops_candidates[0]['q']]]
+    s1 = scores[proj_keys[ops_candidates[1]['q']]][test_keys[ops_candidates[1]['p']]]
+    if s0 <= s1:
+        boson_ops = ops_candidates[0]
     else:
-        decr_ops['p'], proj_ops['p'] = results[1][1]
-        decr_ops['q'], proj_ops['q'] = results[1][0]
+        boson_ops = ops_candidates[1]
 
-    return qubit_labels, decr_ops, proj_ops, gl_states, idx
+    return qubit_labels, boson_ops, gl_states, idx
 
 
 def hopping_term(
