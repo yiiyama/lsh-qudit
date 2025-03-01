@@ -423,37 +423,6 @@ def hopping_diagonal_term(
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
     qubit_labels, boson_ops, gl_states, indices = config
 
-    # Construct the full diagonal op as a tensor
-    # Start with the diagonal function
-    diag_op = np.tile(diag_fn[..., None, None, None], (1, 1, 1, BT, 2, 2))
-    diag_op = np.moveaxis(diag_op, (0, 1, 2, 3), (indices[x] for x in ["p", "x", "y", "q"]))
-    # p projector
-    diag_op = np.moveaxis(diag_op, (indices["p"], indices["x"]), (0, 1))
-    if boson_ops['p'][1] == 'Lambda':
-        diag_op[-1, 0] = 0.
-    elif boson_ops['p'][1] == 'zero':
-        diag_op[1:, 0] = 0.
-    diag_op = np.moveaxis(diag_op, (0, 1), (indices["p"], indices["x"]))
-    diag_op = np.moveaxis(diag_op, (indices["q"], indices["y"]), (0, 1))
-    # q projector
-    if boson_ops['q'][1] == 'Lambda':
-        diag_op[-1, 1] = 0.
-    elif boson_ops['q'][1] == 'zero':
-        diag_op[1:, 1] = 0.
-    diag_op = np.moveaxis(diag_op, (0, 1), (indices["q"], indices["y"]))
-    # Zx
-    diag_op = np.moveaxis(diag_op, indices["x"], 0)
-    diag_op[1] *= -1.
-    diag_op = np.moveaxis(diag_op, 0, indices["x"])
-    # |1)(1|x'
-    diag_op = np.moveaxis(diag_op, indices["x'"], 0)
-    diag_op[0] = 0.
-    diag_op = np.moveaxis(diag_op, 0, indices["x'"])
-    # Zy'
-    diag_op = np.moveaxis(diag_op, indices["y'"], 0)
-    diag_op[1] *= -1.
-    diag_op = np.moveaxis(diag_op, 0, indices["y'"])
-
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
     states = gl_states.copy()
     idx = indices["y'"]
@@ -483,49 +452,48 @@ def hopping_diagonal_term(
     usvd_states[:, indices["y'"]] += 1
     usvd_states = np.unique(np.concatenate([states, usvd_states], axis=0), axis=0)
 
-    # Apply the projectors to identify post-projection degrees of freedom
-    qubits = ["x'", "y'"]
+    # Apply the projectors and construct the diagonal operator
+    # Start with the diagonal function
+    diag_op = np.tile(diag_fn[..., None, None], (1, 1, 1, 2, 2))
+    op_dims = ["p", "x", "y", "x'", "y'"]
+    if boson_ops['p'][1] == 'id':
+        # Diag op is expressed in terms of n_q
+        op_dims[0] = 'q'
+
     states = states[states[:, indices["x'"]] == 1]
+    # Zx, Zy', P1x'
+    diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
+    diag_op *= np.expand_dims(np.array([1., -1.]), [0, 2, 3, 4])
+    diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
+
     for boson, fermion, cval in [('p', 'x', 0), ('q', 'y', 1)]:
-        if boson_ops[boson][1] == 'id':
+        projector = boson_ops[boson][1]
+        if projector == 'id':
             continue
-        qubits.append(boson)
         mask = states[:, indices[fermion]] == cval
-        if boson_ops[boson][1] == 'Lambda':
+        if projector == 'Lambda':
             mask &= states[:, indices[boson]] == BT - 1
-            states = states[~mask]
         else:
             mask &= states[:, indices[boson]] != 0
-            states = states[~mask]
-    for label in ["x", "y"]:
-        if np.unique(states[:, indices[label]]).shape[0] > 1:
-            qubits.append(label)
+        states = states[~mask]
 
-    op_dims = [key for key in sorted(indices, key=lambda k: indices[k])]
-    for dim in ['p', 'q']:
-        if boson_ops[dim][1] == 'id':
-            # Remove dimension
-            idim = next(i for i, n in enumerate(op_dims) if n == dim)
-            diag_op = np.moveaxis(diag_op, idim, 0)[unique[0]]
-            op_dims.remove(dim)
+        fdim = op_dims.index(fermion)
+        diag_op = np.moveaxis(diag_op, fdim, 1)
+        if projector == 'Lambda':
+            diag_op[-1, cval] = 0.
+        else:
+            diag_op[1:, cval] = 0.
+        diag_op = np.moveaxis(diag_op, 1, fdim)
 
-    for dim in ['x', 'y']:
-        unique = np.unique(states[:, indices[dim]])
+    for fermion in ["x", "y"]:
+        unique = np.unique(states[:, indices[fermion]])
         if unique.shape[0] == 1:
-            # Remove dimension
-            idim = next(i for i, n in enumerate(op_dims) if n == dim)
-            diag_op = np.moveaxis(diag_op, idim, 0)[unique[0]]
-            op_dims.remove(dim)
+            fdim = op_dims.index(fermion)
+            diag_op = np.moveaxis(diag_op, fdim, 0)[unique[0]]
+            op_dims.pop(fdim)
 
     # Convert the op to Pauli products
-    boson_occnums = {}
-    for boson in ['p', 'q']:
-        if boson_ops[boson][1] == 'id':
-            boson_occnums[boson] = np.unique(states[:, indices[boson]])
-        else:
-            boson_occnums[boson] = np.unique(usvd_states[:, indices[boson]])
-
-    if np.all(boson_occnums['p'] < 2) and np.all(boson_occnums['q'] < 2):
+    if np.all(np.unique(usvd_states[:, indices[op_dims[0]]]) < 2):
         iz = np.array([[1., 1.], [1., -1.]]) / 2.
         for idim in range(diag_op.ndim):
             diag_op = np.moveaxis(diag_op, idim, 0)[:2]
@@ -922,10 +890,9 @@ def hi1_r2_usvd(qp=None):
 
 
 def hi1_diag_r2_op(interaction_x, time_step):
-    # o2-o2-i2-i1
-    spo = (
-        (p0 - sqrt2 * p1).tensor(p0).tensor(p0 + p1 / sqrt2)
-        - p1.tensor(p1).tensor(sqrt3 / sqrt2 * p0 + p1)
+    # o2-l3-o3-i3-i2
+    spo = (p0 - sqrt2 * p1).tensor(
+        p0.tensor(p0 + p1 / sqrt2) + p1.tensor(sqrt3 / sqrt2 * p0 + p1)
     ).tensor(pauliz).tensor(p1).simplify() * interaction_x * time_step
     return spo
 
