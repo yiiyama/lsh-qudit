@@ -43,7 +43,7 @@ def sort_qubits(circuit, initial_placement):
     qregs = []
     mapping = [None] * initial_placement.num_qubits
     for isite in range(max_site, min_site - 1, -1):
-        for name in ['l', 'a', 'o', 'i']:
+        for name in ['d', 'l', 'o', 'i']:
             try:
                 i_in = next(i for i, l in enumerate(initial_placement.qubit_labels)
                             if l == (name, isite))
@@ -149,3 +149,8 @@ def physical_states(left_flux=None, right_flux=None, as_multi=False):
         return states
 
     return np.sum(states * np.cumprod((1,) + shape[-1:0:-1])[None, ::-1], axis=1)
+
+
+def clean_array(arr):
+    return (np.where(np.isclose(arr.real, 0.), 0., arr.real)
+            + 1.j * np.where(np.isclose(arr.imag, 0.), 0., arr.imag))
