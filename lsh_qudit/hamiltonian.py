@@ -310,7 +310,23 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
     else:
         boson_ops = ops_candidates[1]
 
-    return qubit_labels, boson_ops, gl_states, idx
+    match (term_type, site % 2):
+        case (1, 0):
+            labels = ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
+        case (1, 1):
+            labels = ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
+        case (2, 0):
+            labels = ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+        case (2, 1):
+            labels = ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
+    if boson_ops['p'][0] == 'X':
+        labels.remove("pd")
+    if boson_ops['q'][0] == 'X':
+        labels.remove("qd")
+
+    default_qp = QubitPlacement([qubit_labels[label] for label in labels])
+
+    return qubit_labels, boson_ops, default_qp, gl_states, idx
 
 
 def hopping_term(
@@ -335,7 +351,7 @@ def hopping_term(
     circuit.compose(usvd_circuit.inverse(), qubits=[init_p[lab] for lab in final_p.qubit_labels],
                     inplace=True)
 
-    return circuit, qp, qp
+    return circuit, init_p, init_p
 
 
 def hopping_usvd(
@@ -348,11 +364,10 @@ def hopping_usvd(
 ):
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, boson_ops = config[:2]
+    qubit_labels, boson_ops, default_qp = config[:3]
 
     if qp is None:
-        labels = ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
-        qp = QubitPlacement([qubit_labels[lab] for lab in labels])
+        qp = default_qp
 
     init_p = qp
 
@@ -414,14 +429,10 @@ def hopping_diagonal_term(
 
     Using the hopping term config for the given boundary condition, identify the qubits that appear
     in the circuit, compute the Z rotation angles, and compose the parity network circuit.
-
-    TODO need to be able to select whether to express diag_op in p or q. As it is now, we are expressing
-    in p and tiling in q, which is simply wrong. If we don't have X decrementers n_p and n_q are fully
-    in synch. Perhaps pass diag_op through the usvd_states construction together to move the entries?
     """
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, boson_ops, gl_states, indices = config
+    qubit_labels, boson_ops, default_qp, gl_states, indices = config
 
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
     states = gl_states.copy()
@@ -455,10 +466,18 @@ def hopping_diagonal_term(
     # Apply the projectors and construct the diagonal operator
     # Start with the diagonal function
     diag_op = np.tile(diag_fn[..., None, None], (1, 1, 1, 2, 2))
-    op_dims = ["p", "x", "y", "x'", "y'"]
     if boson_ops['p'][1] == 'id':
         # Diag op is expressed in terms of n_q
-        op_dims[0] = 'q'
+        op_dims = ['q']
+    elif boson_ops['q'][1] == 'id':
+        op_dims = ['p']
+    elif site % 2 == 0 and term_type == 1:
+        op_dims = ['q']
+    elif site % 2 == 0 and term_type == 2:
+        op_dims = ['p']
+    else:
+        op_dims = ['p']
+    op_dims += ["x", "y", "x'", "y'"]
 
     states = states[states[:, indices["x'"]] == 1]
     # Zx, Zy', P1x'
@@ -503,7 +522,7 @@ def hopping_diagonal_term(
 
     # Construct the circuit
     if qp is None:
-        qp = QubitPlacement([qubit_labels[lab] for lab in op_dims])
+        qp = default_qp
 
     circuit = QuantumCircuit(qp.num_qubits)
     if qp.num_qubits == 4:
