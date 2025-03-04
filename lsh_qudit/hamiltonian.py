@@ -325,7 +325,7 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
         labels.remove("pd")
     if boson_ops['q'][0] == 'id':
         labels.remove("q")
-    if boson_ops['q'][0] != 'lamba':
+    if boson_ops['q'][0] != 'lambda':
         labels.remove("qd")
 
     default_qp = QubitPlacement([qubit_labels[label] for label in labels])
@@ -372,13 +372,17 @@ def hopping_usvd(
 
     if qp is None:
         qp = default_qp
-
     init_p = qp
+
+    circuit = QuantumCircuit(init_p.num_qubits)
 
     def qpl(label):
         return qp[qubit_labels[label]]
 
-    circuit = QuantumCircuit(init_p.num_qubits)
+    def swap(label1, label2):
+        circuit.swap(qpl(label1), qpl(label2))
+        return qp.swap(qubit_labels[label1], qubit_labels[label2])
+
     if boson_ops['q'][0] == 'id':
         pass
     elif boson_ops['q'][0] == 'X':
@@ -391,6 +395,9 @@ def hopping_usvd(
         circuit.append(XplusGate(), [qpl("qd")])
         circuit.rz(-0.5 * np.pi, qpl("q"))
         circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
+
+    if site % 2 == 1:
+        qp = swap("y'", "q")
 
     if boson_ops['p'][0] == 'id':
         circuit.cx(qpl("y'"), qpl("x'"))
@@ -528,10 +535,15 @@ def hopping_diagonal_term(
     if qp is None:
         qp = default_qp
 
+    circuit = QuantumCircuit(qp.num_qubits)
+
     def qpl(label):
         return qp[qubit_labels[label]]
 
-    circuit = QuantumCircuit(qp.num_qubits)
+    def swap(label1, label2):
+        circuit.swap(qpl(label1), qpl(label2))
+        return qp.swap(qubit_labels[label1], qubit_labels[label2])
+
     match (term_type, site % 2):
         case (1, 0):
             if boson_ops["p"][0] == 'id' and boson_ops["q"][0] == 'X' and "x" not in op_dims:
@@ -551,25 +563,27 @@ def hopping_diagonal_term(
                 coeffs = np.array([interaction_x * time_step * c for c in coeffs.reshape(-1)])
                 coeffs = coeffs.reshape(shape)
                 circ = diag_5qubit_z2_circuit(coeffs)
-                circuit.swap(qpl("x'"), qpl("y'"))
-                circuit.compose(circ, qubits=[2, 3, 4, 5, 6], inplace=True)
-                circuit.swap(qpl("x'"), qpl("y'"))
+                qp = swap("x'", "y'")
+                circuit.compose(circ, qubits=[qpl(lab) for lab in ["x", "x'", "y'", "q", "y"]],
+                                inplace=True)
+                qp = swap("x'", "y'")
             elif boson_ops["p"] != ('lambda', 'Lambda') or boson_ops["q"] != ('lambda', 'Lambda'):
                 raise NotImplementedError(f'Optimization for boson_ops {boson_ops} not implemented')
             else:
                 raise NotImplementedError('General diagonal term H_I^(1)[r even] not implemented')
         case (1, 1):
-            if boson_ops["p"][0] == 'X' and boson_ops["q"] == 'id':
-                # Initial order: ["p", "x", "y'", "x'", "q", "qd", "y"]
+            if boson_ops["p"][0] == 'X' and boson_ops["q"][1] == 'id':
+                # Initial order: ["x", "p", "y'", "x'", "qd", "q", "y"]
                 # op_dims: ["p", "x", "y", "x'", "y'"]
-                coeffs = diag_op.transpose(0, 1, 4, 3, 2)
+                coeffs = diag_op.transpose(1, 0, 4, 3, 2)
                 shape = coeffs.shape
                 coeffs = np.array([interaction_x * time_step * c for c in coeffs.reshape(-1)])
                 coeffs = coeffs.reshape(shape)
                 circ = diag_5qubit_z2_circuit(coeffs)
-                circuit.swap(qpl("q"), qpl("y"))
-                circuit.compose(circ, qubits=[0, 1, 2, 3, 4], inplace=True)
-                circuit.swap(qpl("q"), qpl("y"))
+                qp = swap("q", "y")
+                circuit.compose(circ, qubits=[qpl(lab) for lab in ["x", "p", "y'", "x'", "y"]],
+                                inplace=True)
+                qp = swap("q", "y")
             elif boson_ops["p"] != ('lambda', 'Lambda') or boson_ops["q"] != ('lambda', 'Lambda'):
                 raise NotImplementedError(f'Optimization for boson_ops {boson_ops} not implemented')
             else:

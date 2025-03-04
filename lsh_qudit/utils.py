@@ -31,7 +31,7 @@ class QubitPlacement:
             try:
                 return next(i for i, l in enumerate(self.qubit_labels) if l == index)
             except StopIteration as ex:
-                raise IndexError() from ex
+                raise KeyError(index) from ex
         if isinstance(index, str):
             return [i for i, l in enumerate(self.qubit_labels) if l[0] == index]
         raise IndexError('Invalid index')
