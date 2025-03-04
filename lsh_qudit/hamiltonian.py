@@ -319,9 +319,13 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             labels = ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
         case (2, 1):
             labels = ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
-    if boson_ops['p'][0] == 'X':
+    if boson_ops['p'][0] == 'id':
+        labels.remove("p")
+    if boson_ops['p'][0] != 'lambda':
         labels.remove("pd")
-    if boson_ops['q'][0] == 'X':
+    if boson_ops['q'][0] == 'id':
+        labels.remove("q")
+    if boson_ops['q'][0] != 'lamba':
         labels.remove("qd")
 
     default_qp = QubitPlacement([qubit_labels[label] for label in labels])
@@ -458,11 +462,6 @@ def hopping_diagonal_term(
         states[mask, idx] *= -1
         states[mask, idx] += 1
 
-    usvd_states = states.copy()
-    usvd_states[:, indices["y'"]] *= -1
-    usvd_states[:, indices["y'"]] += 1
-    usvd_states = np.unique(np.concatenate([states, usvd_states], axis=0), axis=0)
-
     # Apply the projectors and construct the diagonal operator
     # Start with the diagonal function
     diag_op = np.tile(diag_fn[..., None, None], (1, 1, 1, 2, 2))
@@ -512,27 +511,118 @@ def hopping_diagonal_term(
             op_dims.pop(fdim)
 
     # Convert the op to Pauli products
-    if np.all(np.unique(usvd_states[:, indices[op_dims[0]]]) < 2):
-        iz = np.array([[1., 1.], [1., -1.]]) / 2.
-        for idim in range(diag_op.ndim):
-            diag_op = np.moveaxis(diag_op, idim, 0)[:2]
-            diag_op = np.moveaxis(np.tensordot(iz, diag_op, (1, 0)), 0, idim)
+    iz = np.array([[1., 1.], [1., -1.]]) / 2.
+    if boson_ops[op_dims[0]][0] == 'lambda':
+        # Transform to [I, Z01, Z12] basis
+        conv = np.array([[1., 1., 1.], [2., -1., -1.], [-1., -1., 2.]]) / 3.
+        diag_op = np.tensordot(conv, diag_op, (1, 0))
     else:
-        raise NotImplementedError('Qudit diagonals')
+        # Transform to [I, Z] basis
+        diag_op = np.tensordot(iz, diag_op[:2], (1, 0))
+    # Transform the remaining dims to [I, Z] basis
+    for idim in range(1, diag_op.ndim):
+        diag_op = np.moveaxis(diag_op, idim, 0)
+        diag_op = np.moveaxis(np.tensordot(iz, diag_op, (1, 0)), 0, idim)
 
     # Construct the circuit
     if qp is None:
         qp = default_qp
 
+    def qpl(label):
+        return qp[qubit_labels[label]]
+
     circuit = QuantumCircuit(qp.num_qubits)
-    if qp.num_qubits == 4:
-        pass
-    elif qp.num_qubits == 5:
-        pass
-    else:
-        pass
+    match (term_type, site % 2):
+        case (1, 0):
+            if boson_ops["p"][0] == 'id' and boson_ops["q"][0] == 'X' and "x" not in op_dims:
+                # Initial order: ["x", "x'", "y'", "q", "y"]
+                # op_dims: ["q", "y", "x'", "y'"]
+                coeffs = diag_op.transpose(2, 3, 0, 1)
+                shape = coeffs.shape
+                coeffs = np.array([interaction_x * time_step * c for c in coeffs.reshape(-1)])
+                coeffs = coeffs.reshape(shape)
+                circ = diag_4qubit_z1_circuit(coeffs)
+                circuit.compose(circ, qubits=[1, 2, 3, 4], inplace=True)
+            elif boson_ops["p"][1] == 'id' and boson_ops["q"][0] == 'X':
+                # Initial order: ["p", "pd", "x", "y'", "x'", "q", "y"]
+                # op_dims: ["q", "x", "y", "x'", "y'"]
+                coeffs = diag_op.transpose(1, 3, 4, 0, 2)
+                shape = coeffs.shape
+                coeffs = np.array([interaction_x * time_step * c for c in coeffs.reshape(-1)])
+                coeffs = coeffs.reshape(shape)
+                circ = diag_5qubit_z2_circuit(coeffs)
+                circuit.swap(qpl("x'"), qpl("y'"))
+                circuit.compose(circ, qubits=[2, 3, 4, 5, 6], inplace=True)
+                circuit.swap(qpl("x'"), qpl("y'"))
+            elif boson_ops["p"] != ('lambda', 'Lambda') or boson_ops["q"] != ('lambda', 'Lambda'):
+                raise NotImplementedError(f'Optimization for boson_ops {boson_ops} not implemented')
+            else:
+                raise NotImplementedError('General diagonal term H_I^(1)[r even] not implemented')
+        case (1, 1):
+            if boson_ops["p"][0] == 'X' and boson_ops["q"] == 'id':
+                # Initial order: ["p", "x", "y'", "x'", "q", "qd", "y"]
+                # op_dims: ["p", "x", "y", "x'", "y'"]
+                coeffs = diag_op.transpose(0, 1, 4, 3, 2)
+                shape = coeffs.shape
+                coeffs = np.array([interaction_x * time_step * c for c in coeffs.reshape(-1)])
+                coeffs = coeffs.reshape(shape)
+                circ = diag_5qubit_z2_circuit(coeffs)
+                circuit.swap(qpl("q"), qpl("y"))
+                circuit.compose(circ, qubits=[0, 1, 2, 3, 4], inplace=True)
+                circuit.swap(qpl("q"), qpl("y"))
+            elif boson_ops["p"] != ('lambda', 'Lambda') or boson_ops["q"] != ('lambda', 'Lambda'):
+                raise NotImplementedError(f'Optimization for boson_ops {boson_ops} not implemented')
+            else:
+                raise NotImplementedError('General diagonal term H_I^(1)[r odd] not implemented')
+        case (2, 0):
+            labels = ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+        case (2, 1):
+            labels = ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
 
     return circuit, qp, qp
+
+
+def diag_3qubit_z0_circuit(coeffs):
+    circuit = QuantumCircuit(3)
+    circuit.rz(2. * coeffs[1, 0, 0], 0)
+    circuit.cx(0, 1)
+    circuit.rz(2. * coeffs[1, 1, 0], 1)
+    circuit.cx(1, 2)
+    circuit.rz(2. * coeffs[1, 1, 1], 2)
+    circuit.cx(0, 1)
+    circuit.cx(1, 2)
+    circuit.rz(2. * coeffs[1, 0, 1], 2)
+    circuit.cx(0, 1)
+    circuit.cx(1, 2)
+    circuit.cx(0, 1)
+    circuit.cx(1, 2)
+    return circuit
+
+
+def diag_4qubit_z1_circuit(coeffs):
+    circuit = QuantumCircuit(4)
+    circuit.compose(diag_3qubit_z0_circuit(coeffs[0]), qubits=[1, 2, 3], inplace=True)
+    circuit.cx(0, 1)
+    circuit.compose(diag_3qubit_z0_circuit(coeffs[1]), qubits=[1, 2, 3], inplace=True)
+    circuit.cx(0, 1)
+    return circuit
+
+
+def diag_5qubit_z2_circuit(coeffs):
+    circuit = QuantumCircuit(5)
+    circuit.compose(diag_3qubit_z0_circuit(coeffs[0, 0]), qubits=[2, 3, 4], inplace=True)
+    circuit.cx(1, 2)
+    circuit.compose(diag_3qubit_z0_circuit(coeffs[0, 1]), qubits=[2, 3, 4], inplace=True)
+    circuit.cx(0, 1)
+    circuit.cx(1, 2)
+    circuit.compose(diag_3qubit_z0_circuit(coeffs[1, 0]), qubits=[2, 3, 4], inplace=True)
+    circuit.cx(0, 1)
+    circuit.cx(1, 2)
+    circuit.compose(diag_3qubit_z0_circuit(coeffs[1, 1]), qubits=[2, 3, 4], inplace=True)
+    circuit.cx(0, 1)
+    circuit.cx(1, 2)
+    circuit.cx(0, 1)
+    return circuit
 
 
 def hopping_usvd_old(term_type, left_flux=None, right_flux=None, qp=None):
@@ -634,65 +724,6 @@ def hopping_usvd_old(term_type, left_flux=None, right_flux=None, qp=None):
     circuit.h(qp['i', 1])
 
     return circuit, init_p, qp
-
-
-def hi1_diag_term(interaction_x, time_step, left_flux=None, right_flux=None, qp=None):
-    # State indices that should pass the full H_I projection
-    outcome_indices = hopping_states(1, left_flux=left_flux, right_flux=right_flux, as_multi=True)
-
-    # Is there a need for the l(r) projector?
-    mask = np.equal(outcome_indices[:, 3], 1) & np.equal(outcome_indices[:, 1], 0)
-    if np.all(np.equal(outcome_indices[mask, 2], 0)):
-        # If all doubly-controlled states had l(r)=0, we skip the decrementer & incrementer in the
-        # SVD circuits altogether and therefore not apply any projection in the diagonal either.
-        lr_proj = 'id'
-    elif np.all(np.equal(outcome_indices[mask, 2], 1)):
-        # If all doubly-controlled states had l(r)=1, we use an X instead of lambda-. We then have
-        # to project on l(r)=0.
-        lr_proj = 'zero'
-    else:
-        lr_proj = 'full'
-
-    # Is there a need for the l(r+1) projector?
-    mask = np.equal(outcome_indices[:, 3], 1) & np.equal(outcome_indices[:, 4], 1)
-    if np.all(np.equal(outcome_indices[mask, 5], 0)):
-        # If all doubly-controlled states had l(r+1)=0, we skip the decrementer & incrementer in the
-        # SVD circuits altogether and therefore not apply any projection in the diagonal either.
-        lrp1_proj = 'id'
-    elif np.all(np.equal(outcome_indices[mask, 5], 1)):
-        # If all doubly-controlled states had l(r+1)=1, we use an X instead of lambda-. We then have
-        # to project on l(r)=0.
-        lrp1_proj = 'zero'
-    else:
-        lrp1_proj = 'full'
-
-    # Next, actually apply the U_SVD transformation to the passing states to determine the
-    # possible simplifications on Z_{o(r)} and the diagonal function.
-    shape = (2, 2, 3, 2, 2, 3)
-    cx = (p0.tensor(paulii) + p1.tensor(paulix)).simplify()
-    cc_cyc_decr = np.eye(12, dtype=np.complex128)
-    cc_cyc_decr[9:, 9:] = cyc_incr.conjugate().T
-    coc_cyc_decr = np.eye(12, dtype=np.complex128)
-    coc_cyc_decr[6:9, 6:9] = cyc_incr.conjugate().T
-    usvd = (op_matrix(hadamard, shape, 2) @ op_matrix(cx, shape, (2, 5))
-            @ op_matrix(coc_cyc_decr, shape, (2, 4, 3)) @ op_matrix(cc_cyc_decr, shape, (2, 1, 0)))
-
-    states = hopping_states(1, left_flux=left_flux, right_flux=right_flux, as_multi=False)
-    one_hots = np.zeros((np.prod(shape),) + states.shape)
-    one_hots[states, np.arange(len(states))] = 1.
-    tr_states = np.array(np.nonzero((usvd @ one_hots).reshape(shape + (-1,)))[:-1]).T
-
-    if np.all(np.equal(tr_states[:, 1], 0)):
-        z_or = 1
-    elif np.all(np.equal(tr_states[:, 1], 1)):
-        z_or = -1
-    else:
-        z_or = None
-
-    diag_fn = diagonal_function_entries(1, left_flux=left_flux, right_flux=right_flux)
-
-    # Compose the full diagonal term
-    # diag_op =
 
 
 def hi1_r0_usvd(qp=None):
