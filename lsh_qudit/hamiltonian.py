@@ -350,10 +350,8 @@ def hopping_term(
 
     circuit = QuantumCircuit(init_p.num_qubits)
     circuit.compose(usvd_circuit, inplace=True)
-    circuit.compose(diag_circuit, qubits=[init_p[lab] for lab in final_p.qubit_labels],
-                    inplace=True)
-    circuit.compose(usvd_circuit.inverse(), qubits=[init_p[lab] for lab in final_p.qubit_labels],
-                    inplace=True)
+    circuit.compose(diag_circuit, inplace=True)
+    circuit.compose(usvd_circuit.inverse(), inplace=True)
 
     return circuit, init_p, init_p
 
@@ -402,11 +400,8 @@ def hopping_usvd(
     if boson_ops['p'][0] == 'id':
         circuit.cx(qpl("y'"), qpl("x'"))
     else:
-        # circuit.cx(qpl("y'"), qpl("x'"))
-        # circuit.swap(qpl("y'"), qpl("x'"))
-        circuit.cx(qpl("x'"), qpl("y'"))
         circuit.cx(qpl("y'"), qpl("x'"))
-        qp = qp.swap(qubit_labels["y'"], qubit_labels["x'"])
+        qp = swap("y'", "x'")
 
         circuit.x(qpl("x"))
         if boson_ops['p'][0] == 'X':
