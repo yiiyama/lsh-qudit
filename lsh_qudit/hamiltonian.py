@@ -60,6 +60,7 @@ cziy.cp(np.pi / 2., 1, 0)
 cziy.h(2)
 
 BT = 3
+BOSON_NLEVEL = 2
 
 hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
 diag_fn = np.sqrt((np.arange(BT)[:, None, None] + np.arange(1, 3)[None, :, None])
@@ -134,24 +135,46 @@ def electric_term(
                         inplace=True)
 
     else:
-        if qp is None:
-            qp = QubitPlacement([('i', site), ('o', site), ('l', site), ('d', site)])
-        circuit = QuantumCircuit(4)
-        # H_E^(1) + H_E^(2)
-        circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
-        circuit.append(P2Gate(-2. * time_step), [qp['d']])
+        if BOSON_NLEVEL == 2:
+            if qp is None:
+                qp = QubitPlacement([('i', site), ('o', site), ('l', site),
+                                     ('d0', site), ('d1', site)])
+            circuit = QuantumCircuit(5)
+            # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
+            coeffs = np.zeros((2, 2))
+            coeffs[0, 1] = 0.75
+            coeffs[1, 0] = 2.
+            iz = np.array([[1., 1.], [1., -1.]]) / 2.
+            for idim in range(2):
+                coeffs = np.moveaxis(np.tensordot(iz, coeffs, (1, idim)), 0, idim)
+            circuit.rz(coeffs[0, 1] * time_step, qp['d0'])
+            circuit.rz(coeffs[1, 0] * time_step, qp['d1'])
+            circuit.cx(qp['d0'], qp['d1'])
+            circuit.rz(coeffs[1, 1] * time_step, qp['d1'])
+            circuit.cx(qp['d0'], qp['d1'])
+
+        elif BOSON_NLEVEL == 3:
+            if qp is None:
+                qp = QubitPlacement([('i', site), ('o', site), ('l', site), ('d', site)])
+            circuit = QuantumCircuit(4)
+            # H_E^(1) + H_E^(2)
+            circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
+            circuit.append(P2Gate(-2. * time_step), [qp['d']])
         # H_E^(3) 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
         circuit.compose(ccix, qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
-        circuit.append(X12Gate(), [qp['d', site]])
-        circuit.append(QubitQutritCRxPlusPiGate(), [qp['l', site], qp['d', site]])
-        circuit.append(X12Gate(), [qp['d', site]])
-        circuit.append(QGate(0.25 * time_step), [qp['d', site]])
-        circuit.append(X12Gate(), [qp['d', site]])
-        circuit.append(QubitQutritCRxMinusPiGate(), [qp['l', site], qp['d', site]])
-        circuit.append(X12Gate(), [qp['d', site]])
-        circuit.append(QGate(-0.25 * time_step), [qp['d', site]])
+        if BOSON_NLEVEL == 2:
+            pass
+        elif BOSON_NLEVEL == 3:
+            circuit.append(X12Gate(), [qp['d', site]])
+            circuit.append(QubitQutritCRxPlusPiGate(), [qp['l', site], qp['d', site]])
+            circuit.append(X12Gate(), [qp['d', site]])
+            circuit.append(QGate(0.25 * time_step), [qp['d', site]])
+            circuit.append(X12Gate(), [qp['d', site]])
+            circuit.append(QubitQutritCRxMinusPiGate(), [qp['l', site], qp['d', site]])
+            circuit.append(X12Gate(), [qp['d', site]])
+            circuit.append(QGate(-0.25 * time_step), [qp['d', site]])
         circuit.rz(-0.5 * time_step, qp['l', site])
         circuit.compose(ccix.inverse(), qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
