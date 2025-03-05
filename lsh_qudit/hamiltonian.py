@@ -5,11 +5,10 @@ import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterExpression
 from qiskit.quantum_info import SparsePauliOp
-from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, RZ12Gate, QGate, XplusGate,
+from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate,
                                       XminusGate, QubitQutritCRxMinusPiGate,
                                       QubitQutritCRxPlusPiGate)
 from .utils import QubitPlacement, op_matrix, physical_states
-from .parity_network import full_parity_walk
 
 
 sqrt2 = np.sqrt(2.)
