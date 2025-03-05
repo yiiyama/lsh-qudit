@@ -133,11 +133,14 @@ def op_matrix(op, shape, qubits):
     return mat
 
 
-def physical_states(left_flux=None, right_flux=None, as_multi=False):
-    shape = (2, 2, 3, 2, 2, 3)
+def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False):
+    shape = (2, 2, 3) * num_sites
     states = np.array(np.unravel_index(np.arange(np.prod(shape)), shape)).T
-    agl_mask = np.equal((1 - states[:, 0]) * states[:, 1] + states[:, 2],
-                        states[:, 3] * (1 - states[:, 4]) + states[:, 5])
+    agl_mask = np.ones(states.shape[:1], dtype=bool)
+    for iconn in range(num_sites - 1):
+        il = iconn * 3
+        agl_mask &= np.equal((1 - states[:, il + 0]) * states[:, il + 1] + states[:, il + 2],
+                             states[:, il + 3] * (1 - states[:, il + 4]) + states[:, il + 5])
     states = states[agl_mask]
     if isinstance(left_flux, int):
         left_flux = (left_flux,)
@@ -151,12 +154,11 @@ def physical_states(left_flux=None, right_flux=None, as_multi=False):
     if right_flux:
         mask = np.zeros(states.shape[0], dtype=bool)
         for val in right_flux:
-            mask |= np.equal((1 - states[:, 3]) * states[:, 4] + states[:, 5], val)
+            mask |= np.equal((1 - states[:, -3]) * states[:, -2] + states[:, -1], val)
         states = states[mask]
 
     if as_multi:
         return states
-
     return np.sum(states * np.cumprod((1,) + shape[-1:0:-1])[None, ::-1], axis=1)
 
 
