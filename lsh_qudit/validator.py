@@ -37,7 +37,7 @@ def circuit_unitary(
         else:
             try:
                 out_circuit.append(cirq_gate.on(*qubits))
-            except ValueError:
+            except (ValueError, AttributeError):
                 print(datum)
                 print(cirq_gate)
                 print(qubits)
@@ -357,14 +357,14 @@ class CXiDagGateC(cirq.Gate):
 GATE_TRANSLATION = {
     'rz': (cirq.rz, RZ01GateC),
     'p': (PhaseGateC, P1GateC),
-    'x': (cirq.X, X01GateC),
+    'x': (cirq.X, X01GateC()),
     't': cirq.T,
     'tdg': cirq.ZPowGate(exponent=-0.25),
     'cp': CPhaseGateC,
     'cx': cirq.CNOT,
     'swap': cirq.SWAP,
     'ccx': cirq.CCNOT,
-    'h': (cirq.H, H01GateC),
+    'h': (cirq.H, H01GateC()),
     'x12': X12GateC(),
     'xminus': XminusGateC(),
     'xplus': XplusGateC(),
