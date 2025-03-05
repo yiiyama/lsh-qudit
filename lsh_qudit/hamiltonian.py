@@ -413,7 +413,7 @@ def hopping_usvd(
             circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
             circuit.append(XplusGate(), [qpl("pd")])
             circuit.rz(-0.5 * np.pi, qpl("p"))
-            circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("p")], inplace=True)
+            circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
         circuit.x(qpl("x"))
 
     circuit.h(qpl("y'"))
@@ -421,21 +421,13 @@ def hopping_usvd(
     return circuit, init_p, qp
 
 
-def hopping_diagonal_term(
+def hopping_diagonal_op(
     term_type,
     site,
-    time_step,
-    interaction_x,
     left_flux=None,
     right_flux=None,
     config=None,
-    qp=None
 ):
-    """Construct the circuit for the diagonal term.
-
-    Using the hopping term config for the given boundary condition, identify the qubits that appear
-    in the circuit, compute the Z rotation angles, and compose the parity network circuit.
-    """
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
     qubit_labels, boson_ops, default_qp, gl_states, indices = config
@@ -526,6 +518,32 @@ def hopping_diagonal_term(
         diag_op = np.moveaxis(diag_op, idim, 0)
         diag_op = np.moveaxis(np.tensordot(iz, diag_op, (1, 0)), 0, idim)
 
+    return diag_op, op_dims
+
+
+def hopping_diagonal_term(
+    term_type,
+    site,
+    time_step,
+    interaction_x,
+    left_flux=None,
+    right_flux=None,
+    config=None,
+    qp=None
+):
+    """Construct the circuit for the diagonal term.
+
+    Using the hopping term config for the given boundary condition, identify the qubits that appear
+    in the circuit, compute the Z rotation angles, and compose the parity network circuit.
+    """
+    diag_op, op_dims = hopping_diagonal_op(term_type, site,
+                                           left_flux=left_flux, right_flux=right_flux,
+                                           config=config)
+
+    if config is None:
+        config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+    qubit_labels, boson_ops, default_qp = config[:3]
+
     # Construct the circuit
     if qp is None:
         qp = default_qp
@@ -549,7 +567,8 @@ def hopping_diagonal_term(
                 coeffs = np.array([interaction_x * time_step * c for c in coeffs.reshape(-1)])
                 coeffs = coeffs.reshape(shape)
                 circ = diag_4qubit_z1_circuit(coeffs)
-                circuit.compose(circ, qubits=[1, 2, 3, 4], inplace=True)
+                circuit.compose(circ, qubits=[qpl(lab) for lab in ["x'", "y'", "q", "y"]],
+                                inplace=True)
             elif boson_ops["p"][1] == 'id' and boson_ops["q"][0] == 'X':
                 # Initial order: ["p", "pd", "x", "y'", "x'", "q", "y"]
                 # op_dims: ["q", "x", "y", "x'", "y'"]
