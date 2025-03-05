@@ -63,6 +63,15 @@ def draw_circuit(circuit, initial_placement, *args, **kwargs):
     return circuit.draw('mpl', *args, reverse_bits=True, **kwargs)
 
 
+def draw_with_labels(circuit, initial_placement, *args, **kwargs):
+    qregs = []
+    for name, isite in initial_placement.qubit_labels:
+        qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
+    circ = QuantumCircuit(*qregs)
+    circ.compose(circuit, inplace=True)
+    return circ.draw('mpl', *args, **kwargs)
+
+
 def count_gates(qc: QuantumCircuit):
     gate_count = {qubit: 0 for qubit in qc.qubits}
     for gate in qc.data:
