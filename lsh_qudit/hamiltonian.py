@@ -1,7 +1,6 @@
-from copy import deepcopy
+from collections import namedtuple
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.circuit import Parameter
 from qiskit.quantum_info import SparsePauliOp
 from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, RZ12Gate, QGate, XplusGate,
                                       XminusGate, QubitQutritCRxMinusPiGate,
@@ -174,6 +173,10 @@ def ele3_b_bulk_term(sites, time_step, qp=None):
     return circuit, qp, qp
 
 
+HoppingTermConfig = namedtuple('HoppingTermConfig',
+                               ['qubit_labels', 'boson_ops', 'default_qp', 'gl_states', 'idx'])
+
+
 def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
     """Return the x, y, p, q indices and simplifications.
 
@@ -321,7 +324,7 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
 
     default_qp = QubitPlacement([qubit_labels[label] for label in labels])
 
-    return qubit_labels, boson_ops, default_qp, gl_states, idx
+    return HoppingTermConfig(qubit_labels, boson_ops, default_qp, gl_states, idx)
 
 
 def hopping_term(
@@ -357,24 +360,22 @@ def hopping_usvd(
 ):
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, boson_ops, default_qp = config[:3]
-
     if qp is None:
-        qp = default_qp
+        qp = config.default_qp
     init_p = qp
 
     circuit = QuantumCircuit(init_p.num_qubits)
 
     def qpl(label):
-        return qp[qubit_labels[label]]
+        return qp[config.qubit_labels[label]]
 
     def swap(label1, label2):
         circuit.swap(qpl(label1), qpl(label2))
-        return qp.swap(qubit_labels[label1], qubit_labels[label2])
+        return qp.swap(config.qubit_labels[label1], config.qubit_labels[label2])
 
-    if boson_ops['q'][0] == 'id':
+    if config.boson_ops['q'][0] == 'id':
         pass
-    elif boson_ops['q'][0] == 'X':
+    elif config.boson_ops['q'][0] == 'X':
         circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
     else:
         circuit.compose(ccix, qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
@@ -388,14 +389,14 @@ def hopping_usvd(
     if site % 2 == 1:
         qp = swap("y'", "q")
 
-    if boson_ops['p'][0] == 'id':
+    if config.boson_ops['p'][0] == 'id':
         circuit.cx(qpl("y'"), qpl("x'"))
     else:
         circuit.cx(qpl("y'"), qpl("x'"))
         qp = swap("y'", "x'")
 
         circuit.x(qpl("x"))
-        if boson_ops['p'][0] == 'X':
+        if config.boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         else:
             circuit.compose(ccix, qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
@@ -421,39 +422,38 @@ def hopping_diagonal_op(
 ):
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    boson_ops, _, gl_states, indices = config[1:]
 
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
-    states = gl_states.copy()
-    idx = indices["y'"]
+    states = config.gl_states.copy()
+    idx = config.indices["y'"]
     mask_yp = states[:, idx] == 1
-    idx = indices["x'"]
+    idx = config.indices["x'"]
     states[mask_yp, idx] *= -1
     states[mask_yp, idx] += 1
-    mask = mask_yp & (states[:, indices["y"]] == 1)
-    idx = indices["q"]
-    if boson_ops['q'][0] == 'lambda':
+    mask = mask_yp & (states[:, config.indices["y"]] == 1)
+    idx = config.indices["q"]
+    if config.boson_ops['q'][0] == 'lambda':
         states[mask, idx] -= 1
         states[mask, idx] %= BT
-    elif boson_ops['q'][0] == 'X':
+    elif config.boson_ops['q'][0] == 'X':
         states[mask, idx] *= -1
         states[mask, idx] += 1
-    mask = mask_yp & (states[:, indices["x"]] == 0)
-    idx = indices["p"]
-    if boson_ops['p'][0] == 'lambda':
+    mask = mask_yp & (states[:, config.indices["x"]] == 0)
+    idx = config.indices["p"]
+    if config.boson_ops['p'][0] == 'lambda':
         states[mask, idx] -= 1
         states[mask, idx] %= BT
-    elif boson_ops['p'][0] == 'X':
+    elif config.boson_ops['p'][0] == 'X':
         states[mask, idx] *= -1
         states[mask, idx] += 1
 
     # Apply the projectors and construct the diagonal operator
     # Start with the diagonal function
     diag_op = np.tile(diag_fn[..., None, None], (1, 1, 1, 2, 2))
-    if boson_ops['p'][1] == 'id':
+    if config.boson_ops['p'][1] == 'id':
         # Diag op is expressed in terms of n_q
         op_dims = ['q']
-    elif boson_ops['q'][1] == 'id':
+    elif config.boson_ops['q'][1] == 'id':
         op_dims = ['p']
     elif site % 2 == 0 and term_type == 1:
         op_dims = ['q']
@@ -463,21 +463,21 @@ def hopping_diagonal_op(
         op_dims = ['p']
     op_dims += ["x", "y", "x'", "y'"]
 
-    states = states[states[:, indices["x'"]] == 1]
+    states = states[states[:, config.indices["x'"]] == 1]
     # Zx, Zy', P1x'
     diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
     diag_op *= np.expand_dims(np.array([1., -1.]), [0, 2, 3, 4])
     diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
 
     for boson, fermion, cval in [('p', 'x', 0), ('q', 'y', 1)]:
-        projector = boson_ops[boson][1]
+        projector = config.boson_ops[boson][1]
         if projector == 'id':
             continue
-        mask = states[:, indices[fermion]] == cval
+        mask = states[:, config.indices[fermion]] == cval
         if projector == 'Lambda':
-            mask &= states[:, indices[boson]] == BT - 1
+            mask &= states[:, config.indices[boson]] == BT - 1
         else:
-            mask &= states[:, indices[boson]] != 0
+            mask &= states[:, config.indices[boson]] != 0
         states = states[~mask]
 
         fdim = op_dims.index(fermion)
@@ -489,7 +489,7 @@ def hopping_diagonal_op(
         diag_op = np.moveaxis(diag_op, 1, fdim)
 
     for fermion in ["x", "y"]:
-        unique = np.unique(states[:, indices[fermion]])
+        unique = np.unique(states[:, config.indices[fermion]])
         if unique.shape[0] == 1:
             fdim = op_dims.index(fermion)
             diag_op = np.moveaxis(diag_op, fdim, 0)[unique[0]]
@@ -497,7 +497,7 @@ def hopping_diagonal_op(
 
     # Convert the op to Pauli products
     iz = np.array([[1., 1.], [1., -1.]]) / 2.
-    if boson_ops[op_dims[0]][0] == 'lambda':
+    if config.boson_ops[op_dims[0]][0] == 'lambda':
         # Transform to [I, Z01, Z12] basis
         conv = np.array([[1., 1., 1.], [2., -1., -1.], [-1., -1., 2.]]) / 3.
         diag_op = np.tensordot(conv, diag_op, (1, 0))
@@ -533,24 +533,22 @@ def hopping_diagonal_term(
 
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    qubit_labels, boson_ops, default_qp = config[:3]
-
-    # Construct the circuit
     if qp is None:
-        qp = default_qp
+        qp = config.default_qp
 
     circuit = QuantumCircuit(qp.num_qubits)
 
     def qpl(label):
-        return qp[qubit_labels[label]]
+        return qp[config.qubit_labels[label]]
 
     def swap(label1, label2):
         circuit.swap(qpl(label1), qpl(label2))
-        return qp.swap(qubit_labels[label1], qubit_labels[label2])
+        return qp.swap(config.qubit_labels[label1], config.qubit_labels[label2])
 
     match (term_type, site % 2):
         case (1, 0):
-            if boson_ops["p"][0] == 'id' and boson_ops["q"][0] == 'X' and "x" not in op_dims:
+            if (config.boson_ops["p"][0] == 'id' and config.boson_ops["q"][0] == 'X'
+                and "x" not in op_dims):
                 # Initial order: ["x", "x'", "y'", "q", "y"]
                 # op_dims: ["q", "y", "x'", "y'"]
                 coeffs = diag_op.transpose(2, 3, 0, 1)
@@ -560,7 +558,7 @@ def hopping_diagonal_term(
                 circ = diag_4qubit_z1_circuit(coeffs)
                 circuit.compose(circ, qubits=[qpl(lab) for lab in ["x'", "y'", "q", "y"]],
                                 inplace=True)
-            elif boson_ops["p"][1] == 'id' and boson_ops["q"][0] == 'X':
+            elif config.boson_ops["p"][1] == 'id' and config.boson_ops["q"][0] == 'X':
                 # Initial order: ["p", "pd", "x", "y'", "x'", "q", "y"]
                 # op_dims: ["q", "x", "y", "x'", "y'"]
                 coeffs = diag_op.transpose(1, 3, 4, 0, 2)
@@ -572,12 +570,14 @@ def hopping_diagonal_term(
                 circuit.compose(circ, qubits=[qpl(lab) for lab in ["x", "x'", "y'", "q", "y"]],
                                 inplace=True)
                 qp = swap("x'", "y'")
-            elif boson_ops["p"] != ('lambda', 'Lambda') or boson_ops["q"] != ('lambda', 'Lambda'):
-                raise NotImplementedError(f'Optimization for boson_ops {boson_ops} not implemented')
+            elif (config.boson_ops["p"] != ('lambda', 'Lambda')
+                  or config.boson_ops["q"] != ('lambda', 'Lambda')):
+                raise NotImplementedError(f'Optimization for boson_ops {config.boson_ops} not'
+                                          ' implemented')
             else:
                 raise NotImplementedError('General diagonal term H_I^(1)[r even] not implemented')
         case (1, 1):
-            if boson_ops["p"][0] == 'X' and boson_ops["q"][1] == 'id':
+            if config.boson_ops["p"][0] == 'X' and config.boson_ops["q"][1] == 'id':
                 # Initial order: ["x", "p", "y'", "x'", "qd", "q", "y"]
                 # op_dims: ["p", "x", "y", "x'", "y'"]
                 coeffs = diag_op.transpose(1, 0, 4, 3, 2)
@@ -589,8 +589,10 @@ def hopping_diagonal_term(
                 circuit.compose(circ, qubits=[qpl(lab) for lab in ["x", "p", "y'", "x'", "y"]],
                                 inplace=True)
                 qp = swap("q", "y")
-            elif boson_ops["p"] != ('lambda', 'Lambda') or boson_ops["q"] != ('lambda', 'Lambda'):
-                raise NotImplementedError(f'Optimization for boson_ops {boson_ops} not implemented')
+            elif (config.boson_ops["p"] != ('lambda', 'Lambda')
+                  or config.boson_ops["q"] != ('lambda', 'Lambda')):
+                raise NotImplementedError(f'Optimization for boson_ops {config.boson_ops} not'
+                                          ' implemented')
             else:
                 raise NotImplementedError('General diagonal term H_I^(1)[r odd] not implemented')
         case (2, 0):
