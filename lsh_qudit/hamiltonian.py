@@ -576,6 +576,9 @@ def hopping_diagonal_op(
             diag_op = np.moveaxis(diag_op, fdim, 0)[unique[0]]
             op_dims.pop(fdim)
 
+    if config.boson_ops[op_dims[0]][0] != 'lambda':
+        diag_op = diag_op[:2]
+
     return diag_to_iz(diag_op), op_dims
 
 
