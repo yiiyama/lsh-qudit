@@ -6,6 +6,7 @@ import numpy as np
 import scipy
 from qiskit import QuantumCircuit
 import cirq  # pylint: disable=import-error
+from .utils import clean_array
 
 
 def circuit_unitary(
@@ -57,9 +58,7 @@ def circuit_unitary(
         unitary = unitary.reshape(new_dim, new_dim)
     if diagonal:
         unitary = np.diagonal(unitary)
-    unitary.real = np.where(np.isclose(unitary.real, 0.), 0., unitary.real)
-    unitary.imag = np.where(np.isclose(unitary.imag, 0.), 0., unitary.imag)
-    return unitary
+    return clean_array(unitary)
 
 
 def validate_circuit(
@@ -90,8 +89,7 @@ def validate_unitary(
         target = scipy.linalg.expm(-1.j * target)
     else:
         target = target.copy()
-    target.real = np.where(np.isclose(target.real, 0.), 0., target.real)
-    target.imag = np.where(np.isclose(target.imag, 0.), 0., target.imag)
+    target = clean_array(target)
 
     if subspace is not None:
         unitary = unitary[:, subspace]
