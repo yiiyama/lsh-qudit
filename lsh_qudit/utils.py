@@ -38,12 +38,12 @@ class QubitPlacement:
 
 
 def sort_qubits(circuit, initial_placement):
-    min_site = min(label[1] for label in initial_placement.qubit_labels)
-    max_site = max(label[1] for label in initial_placement.qubit_labels)
+    """Reorder the qubits into i, o, l order in increasing site number."""
+    sites = set(label[1] for label in initial_placement.qubit_labels)
     qregs = []
     mapping = [None] * initial_placement.num_qubits
-    for isite in range(max_site, min_site - 1, -1):
-        for name in ['d', 'l', 'o', 'i']:
+    for isite in sorted(sites):
+        for name in ['i', 'o', 'l', 'd']:
             try:
                 i_in = next(i for i, l in enumerate(initial_placement.qubit_labels)
                             if l == (name, isite))
@@ -58,18 +58,17 @@ def sort_qubits(circuit, initial_placement):
     return circ
 
 
-def draw_circuit(circuit, initial_placement, *args, **kwargs):
-    circuit = sort_qubits(circuit, initial_placement)
-    return circuit.draw('mpl', *args, reverse_bits=True, **kwargs)
-
-
-def draw_with_labels(circuit, initial_placement, *args, **kwargs):
-    qregs = []
-    for name, isite in initial_placement.qubit_labels:
-        qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
-    circ = QuantumCircuit(*qregs)
-    circ.compose(circuit, inplace=True)
-    return circ.draw('mpl', *args, **kwargs)
+def draw_circuit(circuit, initial_placement, *args, reorder=True, **kwargs):
+    if reorder:
+        circuit = sort_qubits(circuit, initial_placement)
+    else:
+        qregs = []
+        for name, isite in initial_placement.qubit_labels:
+            qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
+        circ = QuantumCircuit(*qregs)
+        circ.compose(circuit, inplace=True)
+        circuit = circ
+    return circuit.draw('mpl', *args, **kwargs)
 
 
 def count_gates(qc: QuantumCircuit):
@@ -108,7 +107,7 @@ def op_matrix(op, shape, qubits):
     Args:
         op: Square matrix.
         shape: Qudit dimensions from major to minor.
-        qubits: Qubit ids to embed the op into.
+        qubits: Qubit ids (minor=0) to embed the op into.
     """
     shape = tuple(shape)
     if isinstance(qubits, int):
@@ -134,6 +133,11 @@ def op_matrix(op, shape, qubits):
 
 
 def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False):
+    """Returns an array of AGL-satisfying states with optional boundary conditions.
+
+    When as_multi=True, a 2-dimensional array is returned with the inner dimension corresponding
+    to occupation numbers in the (i, o, l) order in the increasing site number.
+    """
     shape = (2, 2, 3) * num_sites
     states = np.array(np.unravel_index(np.arange(np.prod(shape)), shape)).T
     agl_mask = np.ones(states.shape[:1], dtype=bool)
@@ -165,3 +169,13 @@ def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False
 def clean_array(arr):
     return (np.where(np.isclose(arr.real, 0.), 0., arr.real)
             + 1.j * np.where(np.isclose(arr.imag, 0.), 0., arr.imag))
+
+
+def diag_to_iz(arr):
+    conv = {
+        2: np.array([[1., 1.], [1., -1.]]) / 2.,
+        3: np.array([[1., 1., 1.], [2., -1., -1.], [-1., -1., 2.]]) / 3.
+    }
+    for idim, size in enumerate(arr.shape):
+        arr = np.moveaxis(np.tensordot(conv[size], arr, (1, idim)), 0, idim)
+    return arr

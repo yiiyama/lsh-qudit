@@ -8,7 +8,7 @@ from qiskit.quantum_info import SparsePauliOp
 from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate,
                                       XminusGate, QubitQutritCRxMinusPiGate,
                                       QubitQutritCRxPlusPiGate)
-from .utils import QubitPlacement, op_matrix, physical_states
+from .utils import QubitPlacement, op_matrix, physical_states, diag_to_iz
 
 
 sqrt2 = np.sqrt(2.)
@@ -59,7 +59,7 @@ cziy.cp(np.pi / 2., 1, 0)
 cziy.h(2)
 
 BT = 3
-BOSON_NLEVEL = 2
+BOSON_NLEVEL = 3
 
 hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
 diag_fn = np.sqrt((np.arange(BT)[:, None, None] + np.arange(1, 3)[None, :, None])
@@ -103,7 +103,7 @@ def mass_term(
     return circuit, qp, qp
 
 
-def electric_term(
+def electric_12_term(
     site: int,
     time_step: Number | ParameterExpression,
     left_flux: Optional[int | tuple[int, ...]] = None,
@@ -114,21 +114,86 @@ def electric_term(
     lvals = np.unique(gl_states[:, 2])
     if lvals.shape[0] == 1:
         if qp is None:
+            qp = QubitPlacement([])
+        return QuantumCircuit(0), qp, qp
+    elif np.amax(lvals) == 1:
+        if qp is None:
+            qp = QubitPlacement([('l', site)])
+        circuit = QuantumCircuit(1)
+        # H_E^(1) + H_E^(2)
+        circuit.p(-0.75 * time_step, qp['l'])
+        return circuit, qp, qp
+    elif BOSON_NLEVEL == 2:
+        if qp is None:
+            qp = QubitPlacement([('d0', site), ('d1', site)])
+        circuit = QuantumCircuit(2)
+        # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
+        coeffs = np.zeros((2, 2))
+        coeffs[0, 1] = 0.75
+        coeffs[1, 0] = 2.
+        coeffs = diag_to_iz(coeffs)
+        circuit.rz(coeffs[0, 1] * time_step, qp['d0'])
+        circuit.rz(coeffs[1, 0] * time_step, qp['d1'])
+        circuit.cx(qp['d0'], qp['d1'])
+        circuit.rz(coeffs[1, 1] * time_step, qp['d1'])
+        circuit.cx(qp['d0'], qp['d1'])
+    elif BOSON_NLEVEL == 3:
+        if qp is None:
+            qp = QubitPlacement([('d', site)])
+        circuit = QuantumCircuit(1)
+        # H_E^(1) + H_E^(2)
+        circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
+        circuit.append(P2Gate(-2. * time_step), [qp['d']])
+
+    return circuit, qp, qp
+
+
+def electric_3f_term(
+    site: int,
+    time_step: Number | ParameterExpression,
+    qp: Optional[QubitPlacement] = None
+):
+    # 3/4 * (1 - n_i) * n_o
+    if qp is None:
+        qp = QubitPlacement([('i', site), ('o', site)])
+    circuit = QuantumCircuit(2)
+
+    circuit.x(qp['i'])
+    circuit.cp(-0.75 * time_step, qp['i'], qp['o'])
+    circuit.x(qp['i'])
+
+    return circuit, qp, qp
+
+
+def electric_3b_term(
+    site: int,
+    time_step: Number | ParameterExpression,
+    left_flux: Optional[int | tuple[int, ...]] = None,
+    right_flux: Optional[int | tuple[int, ...]] = None,
+    qp: Optional[QubitPlacement] = None
+):
+    gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, as_multi=True)
+    lvals = np.unique(gl_states[:, 2])
+    if lvals.shape[0] == 1:
+        if lvals[0] == 0:
+            qp = QubitPlacement([])
+            return QuantumCircuit(0), qp, qp
+
+        if qp is None:
             qp = QubitPlacement([('i', site), ('o', site)])
         circuit = QuantumCircuit(2)
+        circuit.x(qp['i'])
+        circuit.cp(-0.5 * lvals[0] * time_step, qp['i'], qp['o'])
+        circuit.x(qp['i'])
 
     elif np.amax(lvals) == 1:
         if qp is None:
             qp = QubitPlacement([('i', site), ('o', site), ('l', site)])
         circuit = QuantumCircuit(3)
-        # H_E^(1) + H_E^(2)
-        circuit.p(-0.75 * time_step, qp['l'])
-        # H_E^(3) 1/2 n_l n_o (1 - n_i)
+        # 1/2 n_l n_o (1 - n_i)
         coeffs = np.zeros((2, 2, 2))
         coeffs[1, 1, 0] = 0.5
-        iz = np.array([[1., 1.], [1., -1.]]) / 2.
-        for idim in range(3):
-            coeffs = np.moveaxis(np.tensordot(iz, coeffs, (1, idim)), 0, idim)
+        coeffs = diag_to_iz(coeffs)
         circuit.compose(diag_3qubit_z0_circuit(coeffs * time_step),
                         qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
@@ -139,32 +204,23 @@ def electric_term(
                 qp = QubitPlacement([('i', site), ('o', site), ('l', site),
                                      ('d0', site), ('d1', site)])
             circuit = QuantumCircuit(5)
-            # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
-            coeffs = np.zeros((2, 2))
-            coeffs[0, 1] = 0.75
-            coeffs[1, 0] = 2.
-            iz = np.array([[1., 1.], [1., -1.]]) / 2.
-            for idim in range(2):
-                coeffs = np.moveaxis(np.tensordot(iz, coeffs, (1, idim)), 0, idim)
-            circuit.rz(coeffs[0, 1] * time_step, qp['d0'])
-            circuit.rz(coeffs[1, 0] * time_step, qp['d1'])
-            circuit.cx(qp['d0'], qp['d1'])
-            circuit.rz(coeffs[1, 1] * time_step, qp['d1'])
-            circuit.cx(qp['d0'], qp['d1'])
-
         elif BOSON_NLEVEL == 3:
             if qp is None:
                 qp = QubitPlacement([('i', site), ('o', site), ('l', site), ('d', site)])
             circuit = QuantumCircuit(4)
-            # H_E^(1) + H_E^(2)
-            circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
-            circuit.append(P2Gate(-2. * time_step), [qp['d']])
-        # H_E^(3) 1/2 n_l n_o (1 - n_i)
+        # 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
         circuit.compose(ccix, qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
         if BOSON_NLEVEL == 2:
-            pass
+            coeffs = np.zeros((2, 2, 2))
+            coeffs[0, 1, 1] = 1.
+            coeffs[1, 0, 1] = 2.
+            coeffs *= 0.5
+            coeffs = diag_to_iz(coeffs)
+            circuit.compose(diag_3qubit_z0_circuit(coeffs * time_step),
+                            qubits=[qp['l', site], qp['d0', site], qp['d1', site]],
+                            inplace=True)
         elif BOSON_NLEVEL == 3:
             circuit.append(X12Gate(), [qp['d', site]])
             circuit.append(QubitQutritCRxPlusPiGate(), [qp['l', site], qp['d', site]])
@@ -178,11 +234,6 @@ def electric_term(
         circuit.compose(ccix.inverse(), qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
         circuit.x(qp['i'])
-
-    # 3/4 * (1 - n_i) * n_o
-    circuit.x(qp['i'])
-    circuit.cp(-0.75 * time_step, qp['i'], qp['o'])
-    circuit.x(qp['i'])
 
     return circuit, qp, qp
 
@@ -448,6 +499,8 @@ def hopping_diagonal_op(
     right_flux=None,
     config=None,
 ):
+    """Compute the diagonal term for the given term type and site number as a sum of Pauli products.
+    """
     if config is None:
         config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
 
@@ -523,21 +576,7 @@ def hopping_diagonal_op(
             diag_op = np.moveaxis(diag_op, fdim, 0)[unique[0]]
             op_dims.pop(fdim)
 
-    # Convert the op to Pauli products
-    iz = np.array([[1., 1.], [1., -1.]]) / 2.
-    if config.boson_ops[op_dims[0]][0] == 'lambda':
-        # Transform to [I, Z01, Z12] basis
-        conv = np.array([[1., 1., 1.], [2., -1., -1.], [-1., -1., 2.]]) / 3.
-        diag_op = np.tensordot(conv, diag_op, (1, 0))
-    else:
-        # Transform to [I, Z] basis
-        diag_op = np.tensordot(iz, diag_op[:2], (1, 0))
-    # Transform the remaining dims to [I, Z] basis
-    for idim in range(1, diag_op.ndim):
-        diag_op = np.moveaxis(diag_op, idim, 0)
-        diag_op = np.moveaxis(np.tensordot(iz, diag_op, (1, 0)), 0, idim)
-
-    return diag_op, op_dims
+    return diag_to_iz(diag_op), op_dims
 
 
 def hopping_diagonal_term(
