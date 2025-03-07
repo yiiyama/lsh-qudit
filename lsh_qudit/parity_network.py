@@ -41,16 +41,16 @@ def parity_network(angles: np.ndarray):
         case 3:
             return _parity_walk_3q_up(angles)
         case 4:
-            if all(is_zero(angle) for angle in np.flatten(angles[..., 0, :])):
+            if all(is_zero(angle) for angle in angles[..., 0, :].flat):
                 return _parity_walk_4q_up_z1(angles)
-            if all(is_zero(angle) for angle in np.flatten(angles[:, 0])):
+            if all(is_zero(angle) for angle in angles[:, 0].flat):
                 return _parity_walk_4q_down_z2(angles)
             if (all(is_zero(angles[to_bin(idx, 4)]) for idx in range(5, 8))
                     or all(is_zero(angles[to_bin(idx, 4)]) for idx in range(9, 15))):
                 return _parity_walk_downr(angles)
             return _parity_walk_upr(angles)
         case 5:
-            if all(is_zero(angle) for angle in np.flatten(angles[:, :, 0])):
+            if all(is_zero(angle) for angle in angles[:, :, 0].flat):
                 return _parity_walk_5q_up_z2(angles)
             if (all(is_zero(angles[to_bin(idx, 5)]) for idx in range(5, 8))
                     or all(is_zero(angles[to_bin(idx, 5)]) for idx in range(9, 15))
@@ -62,7 +62,10 @@ def parity_network(angles: np.ndarray):
 
 
 def _parity_walk_2q_up(angles: np.ndarray, init: bool = True, close: bool = True):
-    """2Q parity network with CX acting from qubit 0 to 1."""
+    """2Q parity network with CX acting from qubit 0 to 1.
+
+    CX count: 2
+    """
     circuit = QuantumCircuit(2)
     rz = RZSetter(circuit, angles, init=init)
     circuit.cx(0, 1)
@@ -73,7 +76,10 @@ def _parity_walk_2q_up(angles: np.ndarray, init: bool = True, close: bool = True
 
 
 def _parity_walk_2q_down(angles: np.ndarray, init: bool = True, close: bool = True):
-    """2Q parity network with CX acting from qubit 0 to 1."""
+    """2Q parity network with CX acting from qubit 0 to 1.
+
+    CX count: 2
+    """
     circuit = QuantumCircuit(2)
     rz = RZSetter(circuit, angles, init=init)
     circuit.cx(1, 0)
@@ -84,8 +90,11 @@ def _parity_walk_2q_down(angles: np.ndarray, init: bool = True, close: bool = Tr
 
 
 def _parity_walk_3q_up(angles: np.ndarray, init: bool = True, close: bool = True):
-    """3Q parity network with the first CX acting from qubit 0 to 1."""
-    circuit = QuantumCircuit(2)
+    """3Q parity network with the first CX acting from qubit 0 to 1.
+
+    CX count: 8
+    """
+    circuit = QuantumCircuit(3)
     rz = RZSetter(circuit, angles, init=init)
     circuit.cx(0, 1)
     rz.apply(1, 0, 1, 1)
@@ -103,8 +112,11 @@ def _parity_walk_3q_up(angles: np.ndarray, init: bool = True, close: bool = True
 
 
 def _parity_walk_3q_down(angles: np.ndarray, init: bool = True, close: bool = True):
-    """3Q parity network with the first CX acting from qubit 2 to 1."""
-    circuit = QuantumCircuit(2)
+    """3Q parity network with the first CX acting from qubit 2 to 1.
+
+    CX count: 8
+    """
+    circuit = QuantumCircuit(3)
     rz = RZSetter(circuit, angles, init=init)
     circuit.cx(2, 1)
     rz.apply(1, 1, 1, 0)
@@ -123,42 +135,75 @@ def _parity_walk_3q_down(angles: np.ndarray, init: bool = True, close: bool = Tr
 
 
 def _parity_walk_4q_up_z1(angles: np.ndarray):
-    """4Q parity network optimized for angles with **Z* form."""
+    """4Q parity network optimized for angles with **Z* form.
+
+    Note that the parity of qubit 0 is tied to that of qubit 1 in this construction, so the short
+    version of this circuit cannot express parities where q0 is 1 and q1 is 0.
+    CX count: 18 (fixed Z1), 30 (else)
+    """
     circuit = QuantumCircuit(4)
-    RZSetter(circuit, angles)
+    rz = RZSetter(circuit, angles)
     circuit.compose(_parity_walk_3q_up(angles[..., 0], init=False), qubits=[1, 2, 3], inplace=True)
     circuit.cx(0, 1)
+    rz.apply(1, 0, 0, 1, 1)
     circuit.compose(_parity_walk_3q_up(angles[..., 1], init=False), qubits=[1, 2, 3], inplace=True)
     circuit.cx(0, 1)
+    if any(not is_zero(angle) for angle in angles[..., 0, 1].flat):
+        circuit.swap(0, 1)
+        subangles = np.zeros((2,) * 3)
+        subangles[..., 1] = angles[..., 0, 1]
+        circuit.compose(_parity_walk_3q_up(subangles, init=False), qubits=[1, 2, 3],
+                        inplace=True)
+        circuit.swap(0, 1)
     return circuit
 
 
 def _parity_walk_4q_down_z2(angles: np.ndarray):
-    """4Q parity network optimized for angles with *Z** form."""
+    """4Q parity network optimized for angles with *Z** form.
+
+    CX count: 18 (fixed Z2), 30 (else)
+    """
     circuit = QuantumCircuit(4)
-    RZSetter(circuit, angles)
+    rz = RZSetter(circuit, angles)
     circuit.compose(_parity_walk_3q_down(angles[0], init=False), qubits=[0, 1, 2], inplace=True)
     circuit.cx(3, 2)
+    rz.apply(2, 1, 1, 0, 0)
     circuit.compose(_parity_walk_3q_down(angles[1], init=False), qubits=[0, 1, 2], inplace=True)
     circuit.cx(3, 2)
+    if any(not is_zero(angle) for angle in angles[1, 0].flat):
+        circuit.swap(3, 2)
+        subangles = np.zeros((2,) * 3)
+        subangles[1] = angles[1, 0]
+        circuit.compose(_parity_walk_3q_down(subangles, init=False), qubits=[0, 1, 2],
+                        inplace=True)
+        circuit.swap(3, 2)
     return circuit
 
 
 def _parity_walk_5q_up_z2(angles: np.ndarray):
-    """5Q parity network optimized for angles with **Z** form."""
+    """5Q parity network optimized for angles with **Z** form.
+
+    Note that the parities of qubit 0 and 1 are tied to that of qubit 2 in this construction, so the
+    circuit cannot express parities where q0 and/or q1 is 1 and q2 is 0.
+    CX count: 40
+    """
     circuit = QuantumCircuit(5)
-    RZSetter(circuit, angles)
+    rz = RZSetter(circuit, angles)
     circuit.compose(_parity_walk_3q_up(angles[..., 0, 0], init=False), qubits=[2, 3, 4],
                     inplace=True)
     circuit.cx(1, 2)
+    rz.apply(2, 0, 0, 1, 1, 0)
     circuit.compose(_parity_walk_3q_up(angles[..., 1, 0], init=False), qubits=[2, 3, 4],
                     inplace=True)
     circuit.cx(0, 1)
+    rz.apply(1, 0, 0, 0, 1, 1)
     circuit.cx(1, 2)
+    rz.apply(2, 0, 0, 1, 0, 1)
     circuit.compose(_parity_walk_3q_up(angles[..., 0, 1], init=False), qubits=[2, 3, 4],
                     inplace=True)
     circuit.cx(0, 1)
     circuit.cx(1, 2)
+    rz.apply(2, 0, 0, 1, 1, 1)
     circuit.compose(_parity_walk_3q_up(angles[..., 1, 1], init=False), qubits=[2, 3, 4],
                     inplace=True)
     circuit.cx(0, 1)
@@ -173,6 +218,13 @@ def _parity_walk_upr(angles: np.ndarray):
     The parity network is built sequentially in the increasing number of involved qubits. This
     allows ommission of circuit blocks if angles for certain contiguous parities are all zero. Each
     block of a given qubit number is constructed recursively from smaller qubit-number blocks.
+
+    CX count:
+        nq=2: 2
+        nq=3: 8
+        nq=4: 24 (full)
+              20 (no I3)
+        nq=5: ?
     """
     num_qubits = angles.ndim
     circuit = QuantumCircuit(num_qubits)
