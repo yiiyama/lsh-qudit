@@ -179,3 +179,7 @@ def diag_to_iz(arr):
     for idim, size in enumerate(arr.shape):
         arr = np.moveaxis(np.tensordot(conv[size], arr, (1, idim)), 0, idim)
     return arr
+
+
+def to_bin(idx, nbits):
+    return tuple((idx >> np.arange(nbits)[::-1]) % 2)
