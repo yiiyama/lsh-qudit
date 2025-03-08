@@ -187,6 +187,64 @@ def _parity_walk_4q_down_z2(angles: np.ndarray):
     return tracer.circuit
 
 
+def _parity_walk_5q_up_z1(angles: np.ndarray):
+    """5Q parity network specialized for angles with ***Z* form.
+
+    CX count: 42
+    """
+    block1 = list(range(6, 32, 4))
+    block2 = list(range(7, 32, 4))
+    tracer = ParityTracer(angles)
+
+    if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block1):
+        tracer.cx(2, 3)
+        tracer.cx(3, 4)
+        _parity_walk_upr_sub(tracer, num_qubits=4, offset=1)
+        tracer.cx(3, 4)
+        tracer.cx(2, 3)
+        tracer.cx(1, 2)
+    if any(not is_zero(angles[to_bin(idx, 5)]) for idx in [3] + block2):
+        tracer.cx(0, 1)
+        if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block2):
+            tracer.cx(2, 3)
+            tracer.cx(3, 4)
+            _parity_walk_upr_sub(tracer, num_qubits=4, offset=1)
+            tracer.cx(3, 4)
+            tracer.cx(2, 3)
+            tracer.cx(1, 2)
+        tracer.cx(0, 1)
+    return tracer.circuit
+
+
+def _parity_walk_5q_down_z3(angles: np.ndarray):
+    """5Q parity network specialized for angles with *Z*** form.
+
+    CX count: 42
+    """
+    block1 = list(range(9, 16))
+    block2 = list(range(25, 32))
+    tracer = ParityTracer(angles)
+
+    if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block1):
+        tracer.cx(2, 1)
+        tracer.cx(1, 0)
+        _parity_walk_downr_sub(tracer, num_qubits=4)
+        tracer.cx(1, 0)
+        tracer.cx(2, 1)
+        tracer.cx(3, 2)
+    if any(not is_zero(angles[to_bin(idx, 5)]) for idx in [24] + block2):
+        tracer.cx(4, 3)
+        if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block2):
+            tracer.cx(2, 1)
+            tracer.cx(1, 0)
+            _parity_walk_downr_sub(tracer, num_qubits=4)
+            tracer.cx(1, 0)
+            tracer.cx(2, 1)
+            tracer.cx(3, 2)
+        tracer.cx(4, 3)
+    return tracer.circuit
+
+
 def _parity_walk_5q_up_z2(angles: np.ndarray):
     """5Q parity network optimized for angles with **Z** form.
 
