@@ -3,7 +3,7 @@ from numbers import Number
 from typing import Optional, Union
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.circuit import ParameterExpression
+from qiskit.circuit import Parameter, ParameterExpression
 from qiskit.quantum_info import SparsePauliOp
 from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate,
                                       XminusGate, QubitQutritCRxMinusPiGate,
@@ -11,6 +11,9 @@ from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate,
 from .utils import QubitPlacement, op_matrix, physical_states, diag_to_iz
 from .parity_network import parity_network
 
+
+BT = 3
+BOSON_NLEVEL = 3
 
 sqrt2 = np.sqrt(2.)
 sqrt3 = np.sqrt(3.)
@@ -35,7 +38,7 @@ ocincr = np.zeros((6, 6), dtype=np.complex128)
 ocincr[:3, :3] = incr
 ocincr[3:, 3:] = np.eye(3, dtype=np.complex128)
 
-rccx_ctc = QuantumCircuit(3)
+rccx_ctc = QuantumCircuit(3, name='rccx_ctc')
 rccx_ctc.ry(-np.pi / 4., 1)
 rccx_ctc.cx(0, 1)
 rccx_ctc.ry(-np.pi / 4., 1)
@@ -43,8 +46,10 @@ rccx_ctc.cx(2, 1)
 rccx_ctc.ry(np.pi / 4., 1)
 rccx_ctc.cx(0, 1)
 rccx_ctc.ry(np.pi / 4., 1)
+rccx_ctc_gate = rccx_ctc.to_gate()
+rccx_ctc_inv_gate = rccx_ctc.inverse().to_gate()
 
-rccx_cct = QuantumCircuit(3)
+rccx_cct = QuantumCircuit(3, name='rccx_cct')
 rccx_cct.ry(-np.pi / 4., 2)
 rccx_cct.cx(2, 1)
 rccx_cct.cx(1, 2)
@@ -54,21 +59,33 @@ rccx_cct.ry(np.pi / 4., 1)
 rccx_cct.cx(1, 2)
 rccx_cct.cx(2, 1)
 rccx_cct.ry(np.pi / 4., 2)
+rccx_cct_gate = rccx_cct.to_gate()
+rccx_cct_inv_gate = rccx_cct.inverse().to_gate()
 
-cziy = QuantumCircuit(3)
-cziy.h(2)
-cziy.t(2)
-cziy.cx(1, 2)
-cziy.tdg(2)
-cziy.cx(0, 2)
-cziy.t(2)
-cziy.cx(1, 2)
-cziy.tdg(2)
-cziy.cp(np.pi / 2., 1, 0)
-cziy.h(2)
+cq_unit = Parameter('cq_unit')
+if BOSON_NLEVEL == 2:
+    cq_coeffs = np.zeros((2, 2, 2))
+    cq_coeffs[0, 1, 1] = 1.
+    cq_coeffs[1, 0, 1] = 2.
+    cq = parity_network(diag_to_iz(cq_coeffs) * cq_unit, name='cq')
+elif BOSON_NLEVEL == 3:
+    cq = QuantumCircuit(2, name='cq')
+    cq.append(X12Gate(), [1])
+    cq.append(QubitQutritCRxPlusPiGate(), [0, 1])
+    cq.append(X12Gate(), [1])
+    cq.append(QGate(0.5 * cq_unit), [1])
+    cq.append(X12Gate(), [1])
+    cq.append(QubitQutritCRxMinusPiGate(), [0, 1])
+    cq.append(X12Gate(), [1])
+    cq.append(QGate(-0.5 * cq_unit), [1])
 
-BT = 3
-BOSON_NLEVEL = 3
+    clambdaminus = QuantumCircuit(2, name=r'c$\lambda^{-}$')
+    clambdaminus.append(QubitQutritCRxMinusPiGate(), [0, 1])
+    clambdaminus.append(XminusGate(), [1])
+    clambdaminus.append(QubitQutritCRxMinusPiGate(), [0, 1])
+    clambdaminus.append(XplusGate(), [1])
+    clambdaminus.rz(-0.5 * np.pi, 0)
+clambdaminus_gate = clambdaminus.to_gate()
 
 hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
 diag_fn = np.sqrt((np.arange(BT)[:, None, None] + np.arange(1, 3)[None, :, None])
@@ -219,29 +236,15 @@ def electric_3b_term(
             circuit = QuantumCircuit(4)
         # 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
-        circuit.compose(rccx_ctc, qubits=[qp['i', site], qp['l', site], qp['o', site]],
-                        inplace=True)
+        circuit.append(rccx_ctc_gate, [qp['i', site], qp['l', site], qp['o', site]])
         if BOSON_NLEVEL == 2:
-            coeffs = np.zeros((2, 2, 2))
-            coeffs[0, 1, 1] = 1.
-            coeffs[1, 0, 1] = 2.
-            coeffs *= 0.5
-            coeffs = diag_to_iz(coeffs)
-            circuit.compose(parity_network(coeffs * time_step),
-                            qubits=[qp['l', site], qp['d0', site], qp['d1', site]],
-                            inplace=True)
+            circuit.append(cq.to_gate({cq_unit: 0.5 * time_step}),
+                           [qp['l', site], qp['d0', site], qp['d1', site]])
         elif BOSON_NLEVEL == 3:
-            circuit.append(X12Gate(), [qp['d', site]])
-            circuit.append(QubitQutritCRxPlusPiGate(), [qp['l', site], qp['d', site]])
-            circuit.append(X12Gate(), [qp['d', site]])
-            circuit.append(QGate(0.25 * time_step), [qp['d', site]])
-            circuit.append(X12Gate(), [qp['d', site]])
-            circuit.append(QubitQutritCRxMinusPiGate(), [qp['l', site], qp['d', site]])
-            circuit.append(X12Gate(), [qp['d', site]])
-            circuit.append(QGate(-0.25 * time_step), [qp['d', site]])
+            circuit.append(cq.to_gate({cq_unit: 0.5 * time_step}),
+                           [qp['l', site], qp['d', site]])
         circuit.rz(-0.5 * time_step, qp['l', site])
-        circuit.compose(rccx_ctc.inverse(), qubits=[qp['i', site], qp['l', site], qp['o', site]],
-                        inplace=True)
+        circuit.append(rccx_ctc_inv_gate, [qp['i', site], qp['l', site], qp['o', site]])
         circuit.x(qp['i'])
 
     return circuit, qp, qp
@@ -446,17 +449,14 @@ def hopping_usvd(
 
     def rel_phase_toffoli(lf1, lf2, lb, inverse):
         if qpl(lb) < qpl(lf1) and qpl(lb) < qpl(lf2):
-            circuit.compose(rccx_cct.inverse() if inverse else rccx_cct,
-                            qubits=list(sorted([qpl(lf1), qpl(lf2), qpl(lb)], reverse=True)),
-                            inplace=True)
+            circuit.append(rccx_cct_inv_gate if inverse else rccx_cct_gate,
+                           list(sorted([qpl(lf1), qpl(lf2), qpl(lb)], reverse=True)))
         elif qpl(lb) > qpl(lf1) and qpl(lb) > qpl(lf2):
-            circuit.compose(rccx_cct.inverse() if inverse else rccx_cct,
-                            qubits=list(sorted([qpl(lf1), qpl(lf2), qpl(lb)])),
-                            inplace=True)
+            circuit.append(rccx_cct_inv_gate if inverse else rccx_cct_gate,
+                           list(sorted([qpl(lf1), qpl(lf2), qpl(lb)])))
         else:
-            circuit.compose(rccx_ctc.inverse() if inverse else rccx_ctc,
-                            qubits=[qpl(lf1), qpl(lb), qpl(lf2)],
-                            inplace=True)
+            circuit.append(rccx_ctc_inv_gate if inverse else rccx_ctc_gate,
+                           [qpl(lf1), qpl(lb), qpl(lf2)])
 
     # Default QP (term_type, site parity):
     # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
@@ -468,11 +468,7 @@ def hopping_usvd(
         circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
     elif config.boson_ops['q'][0] == 'lambda':
         rel_phase_toffoli("y", "y'", "q", False)
-        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("q"), qpl("qd")])
-        circuit.append(XminusGate(), [qpl("qd")])
-        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("q"), qpl("qd")])
-        circuit.append(XplusGate(), [qpl("qd")])
-        circuit.rz(-0.5 * np.pi, qpl("q"))
+        circuit.append(clambdaminus_gate, [qpl("q"), qpl("qd")])
         rel_phase_toffoli("y", "y'", "q", True)
 
     # Bring y' next to x' and do CX
@@ -482,9 +478,7 @@ def hopping_usvd(
         case (2, 1):
             qp = swap("x'", "p")
 
-    # In principle we do a CX between y' and x' here, but will cancel with the SWAP that comes right
-    # after for many configurations
-    # circuit.cx(qpl("y'"), qpl("x'"))
+    circuit.cx(qpl("y'"), qpl("x'"))
 
     # Current QP
     # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
@@ -494,10 +488,7 @@ def hopping_usvd(
 
     if config.boson_ops['p'][0] == 'X':
         # Need y' x p contiguous (order doesn't matter)
-        # qp = swap("y'", "x'")  # Canceling the CX above
-        circuit.cx(qpl("x'"), qpl("y'"))
-        circuit.cx(qpl("y'"), qpl("x'"))
-        qp = qp.swap(config.qubit_labels["y'"], config.qubit_labels["x'"])
+        qp = swap("y'", "x'")
         circuit.x(qpl("x"))
         circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         circuit.x(qpl("x"))
@@ -505,27 +496,15 @@ def hopping_usvd(
         # y'-p-x desired; contiguous is fine. p must be on the original qubit
         match (term_type, site % 2):
             case (1, 0) | (1, 1) | (2, 0):
-                # qp = swap("y'", "x'")
-                circuit.cx(qpl("x'"), qpl("y'"))
-                circuit.cx(qpl("y'"), qpl("x'"))
-                qp = qp.swap(config.qubit_labels["y'"], config.qubit_labels["x'"])
+                qp = swap("y'", "x'")
             case (2, 1):
-                # Deferred CX from above
-                circuit.cx(qpl("y'"), qpl("x'"))
                 qp = swap("x'", "p")
                 qp = swap("x'", "x")
         circuit.x(qpl("x"))
         rel_phase_toffoli("y'", "x", "p", False)
-        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
-        circuit.append(XminusGate(), [qpl("pd")])
-        circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
-        circuit.append(XplusGate(), [qpl("pd")])
-        circuit.rz(-0.5 * np.pi, qpl("p"))
+        circuit.append(clambdaminus_gate, [qpl("p"), qpl("pd")])
         rel_phase_toffoli("y'", "x", "p", True)
         circuit.x(qpl("x"))
-    else:
-        # Deferred CX from above
-        circuit.cx(qpl("y'"), qpl("x'"))
 
     circuit.h(qpl("y'"))
 
