@@ -455,7 +455,7 @@ def hopping_usvd(
                             inplace=True)
         else:
             circuit.compose(rccx_ctc.inverse() if inverse else rccx_ctc,
-                            qubits=[qpl(lf1), qpl(lf2), qpl(lb)],
+                            qubits=[qpl(lf1), qpl(lb), qpl(lf2)],
                             inplace=True)
 
     # Default QP (term_type, site parity):
