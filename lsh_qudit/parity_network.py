@@ -76,8 +76,12 @@ def parity_network(angles: np.ndarray):
                 return _parity_walk_downr(angles)
             return _parity_walk_upr(angles)
         case 5:
+            if all(is_zero(angle) for angle in angles[..., 0, :].flat):
+                return _parity_walk_5q_up_z1(angles)
             if all(is_zero(angle) for angle in angles[:, :, 0].flat):
                 return _parity_walk_5q_up_z2(angles)
+            if all(is_zero(angle) for angle in angles[:, 0].flat):
+                return _parity_walk_5q_down_z3(angles)
             if (all(is_zero(angles[to_bin(idx, 5)]) for idx in range(5, 8))
                     or all(is_zero(angles[to_bin(idx, 5)]) for idx in range(9, 15))
                     or all(is_zero(angles[to_bin(idx, 5)]) for idx in range(17, 31))):

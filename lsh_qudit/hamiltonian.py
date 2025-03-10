@@ -9,6 +9,7 @@ from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate,
                                       XminusGate, QubitQutritCRxMinusPiGate,
                                       QubitQutritCRxPlusPiGate)
 from .utils import QubitPlacement, op_matrix, physical_states, diag_to_iz
+from .parity_network import parity_network
 
 
 sqrt2 = np.sqrt(2.)
@@ -34,17 +35,25 @@ ocincr = np.zeros((6, 6), dtype=np.complex128)
 ocincr[:3, :3] = incr
 ocincr[3:, 3:] = np.eye(3, dtype=np.complex128)
 
-ccix = QuantumCircuit(3)
-ccix.h(2)
-ccix.cx(0, 2)
-ccix.t(2)
-ccix.cx(1, 2)
-ccix.tdg(2)
-ccix.cx(0, 2)
-ccix.t(2)
-ccix.cx(1, 2)
-ccix.tdg(2)
-ccix.h(2)
+rccx_ctc = QuantumCircuit(3)
+rccx_ctc.ry(-np.pi / 4., 1)
+rccx_ctc.cx(0, 1)
+rccx_ctc.ry(-np.pi / 4., 1)
+rccx_ctc.cx(2, 1)
+rccx_ctc.ry(np.pi / 4., 1)
+rccx_ctc.cx(0, 1)
+rccx_ctc.ry(np.pi / 4., 1)
+
+rccx_cct = QuantumCircuit(3)
+rccx_cct.ry(-np.pi / 4., 2)
+rccx_cct.cx(2, 1)
+rccx_cct.cx(1, 2)
+rccx_cct.ry(-np.pi / 4., 1)
+rccx_cct.cx(0, 1)
+rccx_cct.ry(np.pi / 4., 1)
+rccx_cct.cx(1, 2)
+rccx_cct.cx(2, 1)
+rccx_cct.ry(np.pi / 4., 2)
 
 cziy = QuantumCircuit(3)
 cziy.h(2)
@@ -194,23 +203,23 @@ def electric_3b_term(
         coeffs = np.zeros((2, 2, 2))
         coeffs[1, 1, 0] = 0.5
         coeffs = diag_to_iz(coeffs)
-        circuit.compose(diag_3qubit_z0_circuit(coeffs * time_step),
+        circuit.compose(parity_network(coeffs * time_step),
                         qubits=[qp['i', site], qp['o', site], qp['l', site]],
                         inplace=True)
 
     else:
         if BOSON_NLEVEL == 2:
             if qp is None:
-                qp = QubitPlacement([('i', site), ('o', site), ('l', site),
-                                     ('d0', site), ('d1', site)])
+                qp = QubitPlacement([('i', site), ('l', site), ('d0', site), ('d1', site),
+                                     ('o', site)])
             circuit = QuantumCircuit(5)
         elif BOSON_NLEVEL == 3:
             if qp is None:
-                qp = QubitPlacement([('i', site), ('o', site), ('l', site), ('d', site)])
+                qp = QubitPlacement([('i', site), ('l', site), ('d', site), ('o', site)])
             circuit = QuantumCircuit(4)
         # 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
-        circuit.compose(ccix, qubits=[qp['i', site], qp['o', site], qp['l', site]],
+        circuit.compose(rccx_ctc, qubits=[qp['i', site], qp['l', site], qp['o', site]],
                         inplace=True)
         if BOSON_NLEVEL == 2:
             coeffs = np.zeros((2, 2, 2))
@@ -218,7 +227,7 @@ def electric_3b_term(
             coeffs[1, 0, 1] = 2.
             coeffs *= 0.5
             coeffs = diag_to_iz(coeffs)
-            circuit.compose(diag_3qubit_z0_circuit(coeffs * time_step),
+            circuit.compose(parity_network(coeffs * time_step),
                             qubits=[qp['l', site], qp['d0', site], qp['d1', site]],
                             inplace=True)
         elif BOSON_NLEVEL == 3:
@@ -231,7 +240,7 @@ def electric_3b_term(
             circuit.append(X12Gate(), [qp['d', site]])
             circuit.append(QGate(-0.25 * time_step), [qp['d', site]])
         circuit.rz(-0.5 * time_step, qp['l', site])
-        circuit.compose(ccix.inverse(), qubits=[qp['i', site], qp['o', site], qp['l', site]],
+        circuit.compose(rccx_ctc.inverse(), qubits=[qp['i', site], qp['l', site], qp['o', site]],
                         inplace=True)
         circuit.x(qp['i'])
 
@@ -435,57 +444,88 @@ def hopping_usvd(
         circuit.swap(qpl(label1), qpl(label2))
         return qp.swap(config.qubit_labels[label1], config.qubit_labels[label2])
 
+    def rel_phase_toffoli(lf1, lf2, lb, inverse):
+        if qpl(lb) < qpl(lf1) and qpl(lb) < qpl(lf2):
+            circuit.compose(rccx_cct.inverse() if inverse else rccx_cct,
+                            qubits=list(sorted([qpl(lf1), qpl(lf2), qpl(lb)], reverse=True)),
+                            inplace=True)
+        elif qpl(lb) > qpl(lf1) and qpl(lb) > qpl(lf2):
+            circuit.compose(rccx_cct.inverse() if inverse else rccx_cct,
+                            qubits=list(sorted([qpl(lf1), qpl(lf2), qpl(lb)])),
+                            inplace=True)
+        else:
+            circuit.compose(rccx_ctc.inverse() if inverse else rccx_ctc,
+                            qubits=[qpl(lf1), qpl(lf2), qpl(lb)],
+                            inplace=True)
+
     # Default QP (term_type, site parity):
     # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
     # (1, 1): ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
     # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
     # (2, 1): ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
 
-    if config.boson_ops['q'][0] == 'id':
-        pass
-    elif config.boson_ops['q'][0] == 'X':
+    if config.boson_ops['q'][0] == 'X':
         circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
-    else:
-        circuit.compose(ccix, qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
+    elif config.boson_ops['q'][0] == 'lambda':
+        rel_phase_toffoli("y", "y'", "q", False)
         circuit.append(QubitQutritCRxMinusPiGate(), [qpl("q"), qpl("qd")])
         circuit.append(XminusGate(), [qpl("qd")])
         circuit.append(QubitQutritCRxMinusPiGate(), [qpl("q"), qpl("qd")])
         circuit.append(XplusGate(), [qpl("qd")])
         circuit.rz(-0.5 * np.pi, qpl("q"))
-        circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("y"), qpl("q")], inplace=True)
+        rel_phase_toffoli("y", "y'", "q", True)
 
-    # Bring y' next to x', do CX, then bring y' next to p and x
+    # Bring y' next to x' and do CX
     match (term_type, site % 2):
-        case (1, 0) | (2, 0):
-            circuit.cx(qpl("y'"), qpl("x'"))
-            qp = swap("y'", "x'")
         case (1, 1):
             qp = swap("y'", "q")
-            circuit.cx(qpl("y'"), qpl("x'"))
-            qp = swap("y'", "x'")
-            qp = swap("x'", "q")
         case (2, 1):
             qp = swap("x'", "p")
-            circuit.cx(qpl("y'"), qpl("x'"))
-            qp = swap("x'", "p")
-            qp = swap("x'", "x")
 
-    if config.boson_ops['p'][0] == 'id':
-        pass
-    elif config.boson_ops['p'][0] == 'X':
+    # In principle we do a CX between y' and x' here, but will cancel with the SWAP that comes right
+    # after for many configurations
+    # circuit.cx(qpl("y'"), qpl("x'"))
+
+    # Current QP
+    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
+    # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
+    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+    # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"]
+
+    if config.boson_ops['p'][0] == 'X':
+        # Need y' x p contiguous (order doesn't matter)
+        # qp = swap("y'", "x'")  # Canceling the CX above
+        circuit.cx(qpl("x'"), qpl("y'"))
+        circuit.cx(qpl("y'"), qpl("x'"))
+        qp = qp.swap(config.qubit_labels["y'"], config.qubit_labels["x'"])
         circuit.x(qpl("x"))
         circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         circuit.x(qpl("x"))
-    else:
+    elif config.boson_ops['p'][0] == 'lambda':
+        # y'-p-x desired; contiguous is fine. p must be on the original qubit
+        match (term_type, site % 2):
+            case (1, 0) | (1, 1) | (2, 0):
+                # qp = swap("y'", "x'")
+                circuit.cx(qpl("x'"), qpl("y'"))
+                circuit.cx(qpl("y'"), qpl("x'"))
+                qp = qp.swap(config.qubit_labels["y'"], config.qubit_labels["x'"])
+            case (2, 1):
+                # Deferred CX from above
+                circuit.cx(qpl("y'"), qpl("x'"))
+                qp = swap("x'", "p")
+                qp = swap("x'", "x")
         circuit.x(qpl("x"))
-        circuit.compose(ccix, qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
+        rel_phase_toffoli("y'", "x", "p", False)
         circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
         circuit.append(XminusGate(), [qpl("pd")])
         circuit.append(QubitQutritCRxMinusPiGate(), [qpl("p"), qpl("pd")])
         circuit.append(XplusGate(), [qpl("pd")])
         circuit.rz(-0.5 * np.pi, qpl("p"))
-        circuit.compose(ccix.inverse(), qubits=[qpl("y'"), qpl("x"), qpl("p")], inplace=True)
+        rel_phase_toffoli("y'", "x", "p", True)
         circuit.x(qpl("x"))
+    else:
+        # Deferred CX from above
+        circuit.cx(qpl("y'"), qpl("x'"))
 
     circuit.h(qpl("y'"))
 
@@ -579,7 +619,7 @@ def hopping_diagonal_op(
     if config.boson_ops[op_dims[0]][0] != 'lambda':
         diag_op = diag_op[:2]
 
-    return diag_to_iz(diag_op), op_dims
+    return diag_op, op_dims
 
 
 def hopping_diagonal_term(
@@ -620,139 +660,42 @@ def hopping_diagonal_term(
         circuit.swap(qpl(label1), qpl(label2))
         return qp.swap(config.qubit_labels[label1], config.qubit_labels[label2])
 
-    match (term_type, site % 2):
-        case (1, 0):
-            # Initial order ["p", "pd", "x", "y'", "x'", "q", "qd", "y"]
-            if config.boson_ops["p"][1] == 'id' and config.boson_ops["q"][1] == 'zero':
-                if "x" not in op_dims:
-                    # op_dims: ["q", "y", "x'", "y'"] -> transpose to ["y", "q", "y'", "x'"]
-                    circ = diag_4qubit_z1_circuit(diag_op.transpose(1, 0, 3, 2))
-                    labels = ["x'", "y'", "q", "y"]
-                else:
-                    # op_dims: ["q", "x", "y", "x'", "y'"]
-                    circ = diag_5qubit_z2_circuit(diag_op.transpose(2, 0, 4, 3, 1))
-                    labels = ["x", "x'", "y'", "q", "y"]
-                qp = swap("x'", "y'")
-                circuit.compose(circ, qubits=[qpl(lab) for lab in labels], inplace=True)
-                qp = swap("x'", "y'")
-            elif (config.boson_ops["p"] != ('lambda', 'Lambda')
-                  or config.boson_ops["q"] != ('lambda', 'Lambda')):
-                raise NotImplementedError(f'Optimization for boson_ops {config.boson_ops} not'
-                                          ' implemented')
-            else:
-                raise NotImplementedError('General diagonal term H_I^(1)[r even] not implemented')
-        case (1, 1):
-            # Initial order ["x", "p", "pd", "y'", "q", "qd", "x'", "y"]
-            if config.boson_ops["p"][1] == 'zero' and config.boson_ops["q"][1] == 'id':
-                # op_dims: ["p", "x", "y", "x'", "y'"]
-                circ = diag_5qubit_z2_circuit(diag_op.transpose(2, 3, 4, 0, 1))
-                labels = ["x", "p", "y'", "x'", "y"]
-                qp = swap("q", "x'")
-                qp = swap("q", "y")
-                circuit.compose(circ, qubits=[qpl(lab) for lab in labels], inplace=True)
-                qp = swap("q", "y")
-                qp = swap("q", "x'")
-            elif config.boson_ops["p"][1] != 'Lambda' or config.boson_ops["q"][1] != 'Lambda':
-                raise NotImplementedError(f'Optimization for boson_ops {config.boson_ops} not'
-                                          ' implemented')
-            else:
-                raise NotImplementedError('General diagonal term H_I^(1)[r odd] not implemented')
-        case (2, 0):
-            # Initial order ["q", "qd", "y", "x'", "y'", "p", "pd", "x"]
-            if config.boson_ops["q"][1] == 'id' and config.boson_ops["p"][1] == 'zero':
-                if "y" not in op_dims:
-                    # op_dims: ["p", "x", "x'", "y'"]
-                    circ = diag_4qubit_z1_circuit(diag_op.transpose(1, 0, 3, 2))
-                    labels = ["x'", "y'", "p", "x"]
-                else:
-                    # op_dims: ["p", "x", "y", "x'", "y'"]
-                    circ = diag_5qubit_z2_circuit(diag_op.transpose(1, 0, 4, 3, 2))
-                    labels = ["y", "x'", "y'", "p", "x"]
-                circuit.compose(circ, qubits=[qpl(lab) for lab in labels], inplace=True)
-            elif config.boson_ops["p"][1] != 'Lambda' or config.boson_ops["q"][1] != 'Lambda':
-                raise NotImplementedError(f'Optimization for boson_ops {config.boson_ops} not'
-                                          ' implemented')
-            else:
-                raise NotImplementedError('General diagonal term H_I^(2)[r even] not implemented')
-        case (2, 1):
-            # Initial order ["y", "q", "qd", "y'", "p", "pd", "x", "x'"]
-            if config.boson_ops["q"][1] == 'zero' and config.boson_ops["p"][1] == 'id':
-                # op_dims: ["q", "x", "y", "x'", "y'"]
-                circ = diag_5qubit_z2_circuit(diag_op.transpose(1, 3, 4, 0, 2))
-                labels = ["y", "q", "y'", "x'", "x"]
-                qp = swap("x'", "x")
-                qp = swap("x'", "p")
-                qp = swap("p", "x")
-                circuit.compose(circ, qubits=[qpl(lab) for lab in labels], inplace=True)
-                qp = swap("p", "x")
-                qp = swap("x'", "p")
-                qp = swap("x'", "x")
-            elif config.boson_ops["p"][1] != 'Lambda' or config.boson_ops["q"][1] != 'Lambda':
-                raise NotImplementedError(f'Optimization for boson_ops {config.boson_ops} not'
-                                          ' implemented')
-            else:
-                raise NotImplementedError('General diagonal term H_I^(2)[r odd] not implemented')
+    # op_dims as qubit labels
+    reverse_map = {value: key for key, value in config.qubit_labels.items()}
+
+    # QP inherited from Usvd function                      (p incrementer)
+    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"] (id)
+    #         ["p", "pd", "x", "y'", "x'", "q", "qd", "y"] (X, lambda)
+    # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"] (id)
+    #         ["x", "p", "pd", "y'", "x'", "q", "qd", "y"] (X, lambda)
+    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"] (id)
+    #         ["q", "qd", "y", "x'", "y'", "p", "pd", "x"] (X, lambda)
+    # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"] (id)
+    #         ["y", "q", "qd", "x'", "y'", "pd", "p", "x"] (X)
+    #         ["y", "q", "qd", "y'", "p", "pd", "x", "x'"] (lambda)
+
+    match (term_type, site % 2, config.boson_ops["p"][1], config.boson_ops["q"][1]):
+        case (1, 0, 'id', 'zero'):
+            swaps = []
+        case (1, 1, 'zero', 'id'):
+            swaps = [("q", "y")]
+        case (2, 0, 'zero', 'id'):
+            swaps = []
+        case (2, 1, 'id', 'zero'):
+            swaps = [("p", "x")]
+            if config.boson_ops["p"][0] == 'lambda':
+                swaps.append(("p", "x'"))
+        case _:
+            raise NotImplementedError('General diagonal term not implemented')
+
+    for q1, q2 in swaps:
+        qp = swap(q1, q2)
+    # Permute the axis of diag_ops to match the QP order
+    ord_op_dims = [reverse_map[lab] for lab in qp.qubit_labels[::-1] if reverse_map[lab] in op_dims]
+    perm = tuple(op_dims.index(lab) for lab in ord_op_dims)
+    circ = parity_network(diag_to_iz(diag_op.transpose(perm)))
+    circuit.compose(circ, qubits=[qpl(lab) for lab in ord_op_dims[::-1]], inplace=True)
+    for q1, q2 in swaps[::-1]:
+        qp = swap(q1, q2)
 
     return circuit, qp, qp
-
-
-def diag_3qubit_z0_circuit(coeffs):
-    """Return a 3-qubit full parity cycle circuit starting with CNOT(0, 1).
-
-    The coeffs argument is a shape (2, 2, 2) array with numeric or parametric entries. Note that the
-    qubit id and array dimension are in reverse order - Rz angle on local qubit 0 is given by
-    coeffs[0, 0, 1].
-    """
-    circuit = QuantumCircuit(3)
-
-    def add_rz(qubit, *idx):
-        coeff = coeffs[idx]
-        try:
-            iszero = np.isclose(coeff, 0.)
-        except TypeError:
-            iszero = coeff.sympify() == 0
-        if not iszero:
-            circuit.rz(2. * coeff, qubit)
-
-    add_rz(0, 0, 0, 1)
-    add_rz(1, 0, 1, 0)
-    add_rz(2, 1, 0, 0)
-    circuit.cx(0, 1)
-    add_rz(1, 0, 1, 1)
-    circuit.cx(1, 2)
-    add_rz(2, 1, 1, 1)
-    circuit.cx(0, 1)
-    circuit.cx(1, 2)
-    add_rz(2, 1, 0, 1)
-    circuit.cx(0, 1)
-    circuit.cx(1, 2)
-    add_rz(2, 1, 1, 0)
-    circuit.cx(0, 1)
-    circuit.cx(1, 2)
-    return circuit
-
-
-def diag_4qubit_z1_circuit(coeffs):
-    circuit = QuantumCircuit(4)
-    circuit.compose(diag_3qubit_z0_circuit(coeffs[..., 0]), qubits=[1, 2, 3], inplace=True)
-    circuit.cx(0, 1)
-    circuit.compose(diag_3qubit_z0_circuit(coeffs[..., 1]), qubits=[1, 2, 3], inplace=True)
-    circuit.cx(0, 1)
-    return circuit
-
-
-def diag_5qubit_z2_circuit(coeffs):
-    circuit = QuantumCircuit(5)
-    circuit.compose(diag_3qubit_z0_circuit(coeffs[..., 0, 0]), qubits=[2, 3, 4], inplace=True)
-    circuit.cx(1, 2)
-    circuit.compose(diag_3qubit_z0_circuit(coeffs[..., 1, 0]), qubits=[2, 3, 4], inplace=True)
-    circuit.cx(0, 1)
-    circuit.cx(1, 2)
-    circuit.compose(diag_3qubit_z0_circuit(coeffs[..., 0, 1]), qubits=[2, 3, 4], inplace=True)
-    circuit.cx(0, 1)
-    circuit.cx(1, 2)
-    circuit.compose(diag_3qubit_z0_circuit(coeffs[..., 1, 1]), qubits=[2, 3, 4], inplace=True)
-    circuit.cx(0, 1)
-    circuit.cx(1, 2)
-    circuit.cx(0, 1)
-    return circuit

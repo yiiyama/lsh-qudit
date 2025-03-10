@@ -354,6 +354,7 @@ class CXiDagGateC(cirq.Gate):
 
 GATE_TRANSLATION = {
     'rz': (cirq.rz, RZ01GateC),
+    'ry': cirq.ry,
     'p': (PhaseGateC, P1GateC),
     'x': (cirq.X, X01GateC()),
     't': cirq.T,
