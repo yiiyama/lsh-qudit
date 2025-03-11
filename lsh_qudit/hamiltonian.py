@@ -418,7 +418,9 @@ def hopping_term(
 
     circuit = QuantumCircuit(init_p.num_qubits)
     circuit.compose(usvd_circuit, inplace=True)
+    circuit.barrier()
     circuit.compose(diag_circuit, inplace=True)
+    circuit.barrier()
     circuit.compose(usvd_circuit.inverse(), inplace=True)
 
     return circuit, init_p, init_p
@@ -458,55 +460,88 @@ def hopping_usvd(
             circuit.append(rccx_ctc_inv_gate if inverse else rccx_ctc_gate,
                            [qpl(lf1), qpl(lb), qpl(lf2)])
 
-    # Default QP (term_type, site parity):
-    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
-    # (1, 1): ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
-    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
-    # (2, 1): ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
+    if (term_type, site % 2) in [(1, 0), (2, 1)]:
+        # Default QP
+        # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
+        # (2, 1): ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
+        if config.boson_ops['q'][0] == 'X':
+            circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
+        elif config.boson_ops['q'][0] == 'lambda':
+            rel_phase_toffoli("y", "y'", "q", False)
+            circuit.append(clambdaminus_gate, [qpl("q"), qpl("qd")])
+            rel_phase_toffoli("y", "y'", "q", True)
 
-    if config.boson_ops['q'][0] == 'X':
-        circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
-    elif config.boson_ops['q'][0] == 'lambda':
-        rel_phase_toffoli("y", "y'", "q", False)
-        circuit.append(clambdaminus_gate, [qpl("q"), qpl("qd")])
-        rel_phase_toffoli("y", "y'", "q", True)
-
-    # Bring y' next to x' and do CX
-    match (term_type, site % 2):
-        case (1, 1):
-            qp = swap("y'", "q")
-        case (2, 1):
+        # Bring y' next to x' and do CX
+        if term_type == 2:
             qp = swap("x'", "p")
+        circuit.cx(qpl("y'"), qpl("x'"))
 
-    circuit.cx(qpl("y'"), qpl("x'"))
-
-    # Current QP
-    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
-    # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
-    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
-    # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"]
-
-    if config.boson_ops['p'][0] == 'X':
-        # Need y' x p contiguous (order doesn't matter)
-        qp = swap("y'", "x'")
-        circuit.x(qpl("x"))
-        circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
-        circuit.x(qpl("x"))
-    elif config.boson_ops['p'][0] == 'lambda':
-        # y'-p-x desired; contiguous is fine. p must be on the original qubit
-        match (term_type, site % 2):
-            case (1, 0) | (1, 1) | (2, 0):
+        # Current QP
+        # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
+        # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"]
+        if config.boson_ops['p'][0] == 'X':
+            # Need y' x p contiguous (order doesn't matter)
+            qp = swap("y'", "x'")
+            circuit.x(qpl("x"))
+            circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
+            circuit.x(qpl("x"))
+        elif config.boson_ops['p'][0] == 'lambda':
+            # y'-p-x desired; contiguous is fine. p must be on the original qubit
+            if term_type == 1:
                 qp = swap("y'", "x'")
-            case (2, 1):
+            else:
                 qp = swap("x'", "p")
                 qp = swap("x'", "x")
-        circuit.x(qpl("x"))
-        rel_phase_toffoli("y'", "x", "p", False)
-        circuit.append(clambdaminus_gate, [qpl("p"), qpl("pd")])
-        rel_phase_toffoli("y'", "x", "p", True)
-        circuit.x(qpl("x"))
+            circuit.x(qpl("x"))
+            rel_phase_toffoli("y'", "x", "p", False)
+            circuit.append(clambdaminus_gate, [qpl("p"), qpl("pd")])
+            rel_phase_toffoli("y'", "x", "p", True)
+            circuit.x(qpl("x"))
 
-    circuit.h(qpl("y'"))
+        circuit.h(qpl("y'"))
+
+    else:
+        # Default QP
+        # (1, 1): ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
+        # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+        circuit.x(qpl("x'"))
+
+        if config.boson_ops['p'][0] == 'X':
+            circuit.x(qpl("x"))
+            circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
+            circuit.x(qpl("x"))
+        elif config.boson_ops['p'][0] == 'lambda':
+            circuit.x(qpl("x"))
+            rel_phase_toffoli("x", "x'", "p", False)
+            circuit.append(clambdaminus_gate, [qpl("p"), qpl("pd")])
+            rel_phase_toffoli("x", "x'", "p", True)
+            circuit.x(qpl("x"))
+
+        if term_type == 1:
+            qp = swap("y'", "q")
+        circuit.cx(qpl("x'"), qpl("y'"))
+
+        # Current QP
+        # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
+        # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+        if config.boson_ops['q'][0] == 'X':
+            # Need x' y q contiguous (order doesn't matter)
+            qp = swap("y'", "x'")
+            circuit.ccx(qpl("x'"), qpl("y"), qpl("q"))
+        elif config.boson_ops['q'][0] == 'lambda':
+            # x'-q-y desired; contiguous is fine. q must be on the original qubit
+            if term_type == 2:
+                qp = swap("y'", "x'")
+            else:
+                qp = swap("y'", "q")
+                qp = swap("y'", "y")
+
+            rel_phase_toffoli("x'", "y", "q", False)
+            circuit.append(clambdaminus_gate, [qpl("q"), qpl("qd")])
+            rel_phase_toffoli("x'", "y", "q", True)
+
+        circuit.x(qpl("x'"))
+        circuit.h(qpl("x'"))
 
     return circuit, init_p, qp
 
@@ -525,12 +560,19 @@ def hopping_diagonal_op(
 
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
     states = config.gl_states.copy()
-    idx = config.indices["y'"]
-    mask_yp = states[:, idx] == 1
-    idx = config.indices["x'"]
-    states[mask_yp, idx] *= -1
-    states[mask_yp, idx] += 1
-    mask = mask_yp & (states[:, config.indices["y"]] == 1)
+    if (term_type, site % 2) in [(1, 0), (2, 1)]:
+        idx = config.indices["y'"]
+        mask_fp = states[:, idx] == 1
+        idx = config.indices["x'"]
+        states[mask_fp, idx] *= -1
+        states[mask_fp, idx] += 1
+    else:
+        idx = config.indices["x'"]
+        mask_fp = states[:, idx] == 0
+        idx = config.indices["y'"]
+        states[mask_fp, idx] *= -1
+        states[mask_fp, idx] += 1
+    mask = mask_fp & (states[:, config.indices["y"]] == 1)
     idx = config.indices["q"]
     if config.boson_ops['q'][0] == 'lambda':
         states[mask, idx] -= 1
@@ -538,7 +580,7 @@ def hopping_diagonal_op(
     elif config.boson_ops['q'][0] == 'X':
         states[mask, idx] *= -1
         states[mask, idx] += 1
-    mask = mask_yp & (states[:, config.indices["x"]] == 0)
+    mask = mask_fp & (states[:, config.indices["x"]] == 0)
     idx = config.indices["p"]
     if config.boson_ops['p'][0] == 'lambda':
         states[mask, idx] -= 1
@@ -555,19 +597,26 @@ def hopping_diagonal_op(
         op_dims = ['q']
     elif config.boson_ops['q'][1] == 'id':
         op_dims = ['p']
-    elif site % 2 == 0 and term_type == 1:
+    elif (term_type, site % 2) == (1, 0):
         op_dims = ['q']
-    elif site % 2 == 0 and term_type == 2:
+    elif (term_type, site % 2) == (2, 0):
         op_dims = ['p']
     else:
         op_dims = ['p']
     op_dims += ["x", "y", "x'", "y'"]
 
-    states = states[states[:, config.indices["x'"]] == 1]
-    # Zx, Zy', P1x'
-    diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
+    if (term_type, site % 2) in [(1, 0), (2, 1)]:
+        # Project onto x' == 1 and multiply Zy'
+        states = states[states[:, config.indices["x'"]] == 1]
+        diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
+        diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
+    else:
+        # Project onto y' == 0 and multiply Zx'
+        states = states[states[:, config.indices["y'"]] == 0]
+        diag_op *= np.expand_dims(np.array([1., 0.]), [0, 1, 2, 3])
+        diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 4])
+    # Zx
     diag_op *= np.expand_dims(np.array([1., -1.]), [0, 2, 3, 4])
-    diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
 
     for boson, fermion, cval in [('p', 'x', 0), ('q', 'y', 1)]:
         projector = config.boson_ops[boson][1]
@@ -642,17 +691,17 @@ def hopping_diagonal_term(
     # op_dims as qubit labels
     reverse_map = {value: key for key, value in config.qubit_labels.items()}
 
-    # QP inherited from Usvd function                      (p incrementer)
-    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"] (id)
-    #         ["p", "pd", "x", "y'", "x'", "q", "qd", "y"] (X, lambda)
-    # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"] (id)
-    #         ["x", "p", "pd", "y'", "x'", "q", "qd", "y"] (X, lambda)
-    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"] (id)
-    #         ["q", "qd", "y", "x'", "y'", "p", "pd", "x"] (X, lambda)
-    # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"] (id)
-    #         ["y", "q", "qd", "x'", "y'", "pd", "p", "x"] (X)
-    #         ["y", "q", "qd", "y'", "p", "pd", "x", "x'"] (lambda)
-
+    # QP inherited from Usvd function                      (last incrementer)
+    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"] (p=id)
+    #         ["p", "pd", "x", "y'", "x'", "q", "qd", "y"] (p=X, lambda)
+    # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"] (q=id)
+    #         ["x", "p", "pd", "y'", "x'", "q", "qd", "y"] (q=X)
+    #         ["x", "p", "pd", "x'", "q", "qd", "y", "y'"] (q=lambda)
+    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"] (q=id)
+    #         ["q", "qd", "y", "x'", "y'", "p", "pd", "x"] (q=X, lambda)
+    # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"] (p=id)
+    #         ["y", "q", "qd", "x'", "y'", "pd", "p", "x"] (p=X)
+    #         ["y", "q", "qd", "y'", "p", "pd", "x", "x'"] (p=lambda)
     match (term_type, site % 2, config.boson_ops["p"][1], config.boson_ops["q"][1]):
         case (1, 0, 'id', 'zero'):
             swaps = []
