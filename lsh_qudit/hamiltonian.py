@@ -85,7 +85,20 @@ elif BOSON_NLEVEL == 3:
     clambdaminus.append(QubitQutritCRxMinusPiGate(), [0, 1])
     clambdaminus.append(XplusGate(), [1])
     clambdaminus.rz(-0.5 * np.pi, 0)
-clambdaminus_gate = clambdaminus.to_gate()
+    clambdaminus_gate = clambdaminus.to_gate()
+
+    cclambdaminus = QuantumCircuit(4, name=r'cc$\lambda^{-}$')
+    cclambdaminus.append(rccx_cct_gate, [0, 1, 2])
+    cclambdaminus.append(clambdaminus_gate, [2, 3])
+    cclambdaminus.append(rccx_cct_inv_gate, [0, 1, 2])
+
+    clambdaminusc = QuantumCircuit(4, name=r'c$\lambda^{-}$c')
+    clambdaminusc.append(rccx_ctc_gate, [0, 1, 2])
+    clambdaminusc.append(clambdaminus_gate, [1, 3])
+    clambdaminusc.append(rccx_ctc_inv_gate, [0, 1, 2])
+
+cclambdaminus_gate = cclambdaminus.to_gate()
+clambdaminusc_gate = clambdaminusc.to_gate()
 
 hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
 diag_fn = np.sqrt((np.arange(BT)[:, None, None] + np.arange(1, 3)[None, :, None])
@@ -142,14 +155,15 @@ def electric_12_term(
         if qp is None:
             qp = QubitPlacement([])
         return QuantumCircuit(0), qp, qp
-    elif np.amax(lvals) == 1:
+    if np.amax(lvals) == 1:
         if qp is None:
             qp = QubitPlacement([('l', site)])
         circuit = QuantumCircuit(1)
         # H_E^(1) + H_E^(2)
         circuit.p(-0.75 * time_step, qp['l'])
         return circuit, qp, qp
-    elif BOSON_NLEVEL == 2:
+
+    if BOSON_NLEVEL == 2:
         if qp is None:
             qp = QubitPlacement([('d0', site), ('d1', site)])
         circuit = QuantumCircuit(2)
@@ -408,7 +422,8 @@ def hopping_term(
     interaction_x,
     left_flux=None,
     right_flux=None,
-    qp=None
+    qp=None,
+    with_barrier=False
 ):
     config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
 
@@ -418,9 +433,11 @@ def hopping_term(
 
     circuit = QuantumCircuit(init_p.num_qubits)
     circuit.compose(usvd_circuit, inplace=True)
-    circuit.barrier()
+    if with_barrier:
+        circuit.barrier()
     circuit.compose(diag_circuit, inplace=True)
-    circuit.barrier()
+    if with_barrier:
+        circuit.barrier()
     circuit.compose(usvd_circuit.inverse(), inplace=True)
 
     return circuit, init_p, init_p
@@ -449,17 +466,6 @@ def hopping_usvd(
         circuit.swap(qpl(label1), qpl(label2))
         return qp.swap(config.qubit_labels[label1], config.qubit_labels[label2])
 
-    def rel_phase_toffoli(lf1, lf2, lb, inverse):
-        if qpl(lb) < qpl(lf1) and qpl(lb) < qpl(lf2):
-            circuit.append(rccx_cct_inv_gate if inverse else rccx_cct_gate,
-                           list(sorted([qpl(lf1), qpl(lf2), qpl(lb)], reverse=True)))
-        elif qpl(lb) > qpl(lf1) and qpl(lb) > qpl(lf2):
-            circuit.append(rccx_cct_inv_gate if inverse else rccx_cct_gate,
-                           list(sorted([qpl(lf1), qpl(lf2), qpl(lb)])))
-        else:
-            circuit.append(rccx_ctc_inv_gate if inverse else rccx_ctc_gate,
-                           [qpl(lf1), qpl(lb), qpl(lf2)])
-
     if (term_type, site % 2) in [(1, 0), (2, 1)]:
         # Default QP
         # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
@@ -467,9 +473,7 @@ def hopping_usvd(
         if config.boson_ops['q'][0] == 'X':
             circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
         elif config.boson_ops['q'][0] == 'lambda':
-            rel_phase_toffoli("y", "y'", "q", False)
-            circuit.append(clambdaminus_gate, [qpl("q"), qpl("qd")])
-            rel_phase_toffoli("y", "y'", "q", True)
+            circuit.append(clambdaminusc_gate, [qpl("y"), qpl("q"), qpl("y'"), qpl("qd")])
 
         # Bring y' next to x' and do CX
         if term_type == 2:
@@ -487,15 +491,14 @@ def hopping_usvd(
             circuit.x(qpl("x"))
         elif config.boson_ops['p'][0] == 'lambda':
             # y'-p-x desired; contiguous is fine. p must be on the original qubit
+            circuit.x(qpl("x"))
             if term_type == 1:
                 qp = swap("y'", "x'")
+                circuit.append(cclambdaminus_gate, [qpl("y'"), qpl("x"), qpl("p"), qpl("pd")])
             else:
                 qp = swap("x'", "p")
                 qp = swap("x'", "x")
-            circuit.x(qpl("x"))
-            rel_phase_toffoli("y'", "x", "p", False)
-            circuit.append(clambdaminus_gate, [qpl("p"), qpl("pd")])
-            rel_phase_toffoli("y'", "x", "p", True)
+                circuit.append(clambdaminusc_gate, [qpl("y'"), qpl("p"), qpl("x"), qpl("pd")])
             circuit.x(qpl("x"))
 
         circuit.h(qpl("y'"))
@@ -512,9 +515,7 @@ def hopping_usvd(
             circuit.x(qpl("x"))
         elif config.boson_ops['p'][0] == 'lambda':
             circuit.x(qpl("x"))
-            rel_phase_toffoli("x", "x'", "p", False)
-            circuit.append(clambdaminus_gate, [qpl("p"), qpl("pd")])
-            rel_phase_toffoli("x", "x'", "p", True)
+            circuit.append(clambdaminusc_gate, [qpl("x"), qpl("p"), qpl("x'"), qpl("pd")])
             circuit.x(qpl("x"))
 
         if term_type == 1:
@@ -532,13 +533,11 @@ def hopping_usvd(
             # x'-q-y desired; contiguous is fine. q must be on the original qubit
             if term_type == 2:
                 qp = swap("y'", "x'")
+                circuit.append(cclambdaminus_gate, [qpl("x'"), qpl("y"), qpl("q"), qpl("qd")])
             else:
                 qp = swap("y'", "q")
                 qp = swap("y'", "y")
-
-            rel_phase_toffoli("x'", "y", "q", False)
-            circuit.append(clambdaminus_gate, [qpl("q"), qpl("qd")])
-            rel_phase_toffoli("x'", "y", "q", True)
+                circuit.append(clambdaminusc_gate, [qpl("x'"), qpl("q"), qpl("y"), qpl("qd")])
 
         circuit.x(qpl("x'"))
         circuit.h(qpl("x'"))
