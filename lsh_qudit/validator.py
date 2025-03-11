@@ -26,6 +26,8 @@ def circuit_unitary(
     out_circuit = cirq.Circuit()
     for datum in circuit.data:
         gate = datum.operation
+        if gate.name == 'barrier':
+            continue
         qubits = tuple(out_qubits[qubit_map[q]] for q in datum.qubits)
         cirq_gate = GATE_TRANSLATION[gate.name]
         if isinstance(cirq_gate, tuple):
