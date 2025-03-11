@@ -118,7 +118,7 @@ def op_matrix(op, shape, qubits):
     op_shape = tuple(shape[::-1][i] for i in qubits)
     op_dim = np.prod(op_shape)
     idle_shape = tuple(dim for i, dim in enumerate(shape) if full_nq - i - 1 not in qubits)
-    idle_dim = np.prod(idle_shape)
+    idle_dim = int(np.prod(idle_shape))
     mat = np.zeros((idle_dim, idle_dim, op_dim, op_dim), dtype=np.complex128)
     didx = np.arange(idle_dim)
     if isinstance(op, SparsePauliOp):
