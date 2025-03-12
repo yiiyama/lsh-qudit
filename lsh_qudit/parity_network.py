@@ -404,11 +404,13 @@ def parity_walk_upr(
         else:
             _parity_walk_upr_sub(tracer, num_qubits=nq, offset=tracer.num_qubits - nq)
 
-    for iq in range(tracer.num_qubits - 1, 0, -1):
-        tracer.circuit.cx(iq - 1, iq)
     if not singles_front:
         tracer.visited -= singles
         tracer._apply_rz()
+
+    for iq in range(tracer.num_qubits - 1, 0, -1):
+        tracer.cx(iq - 1, iq)
+
     return tracer.circuit
 
 
@@ -468,11 +470,13 @@ def parity_walk_downr(
         else:
             _parity_walk_downr_sub(tracer, num_qubits=nq)
 
-    for iq in range(tracer.num_qubits - 1):
-        tracer.circuit.cx(iq + 1, iq)
     if not singles_front:
         tracer.visited -= singles
         tracer._apply_rz()
+
+    for iq in range(tracer.num_qubits - 1):
+        tracer.cx(iq + 1, iq)
+
     return tracer.circuit
 
 
