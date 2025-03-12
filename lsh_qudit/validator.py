@@ -15,6 +15,28 @@ def circuit_unitary(
     ancillae=(),
     diagonal=False
 ):
+    out_circuit, out_qubits = _build_validation_circuit(circuit, qutrits=qutrits)
+    unitary = out_circuit.unitary(qubit_order=out_qubits[::-1])
+    if ancillae:
+        shape = tuple(qubit.dimension for qubit in out_qubits[::-1])
+        unitary = unitary.reshape(shape + shape)
+        source = tuple(circuit.num_qubits - i - 1 for i in ancillae)
+        source += tuple(2 * circuit.num_qubits - i - 1 for i in ancillae)
+        num_anc_axes = len(ancillae) * 2
+        dest = tuple(range(num_anc_axes))
+        unitary = np.moveaxis(unitary, source, dest)
+        unitary = unitary[(0,) * num_anc_axes]
+        new_dim = np.prod(shape) // np.prod([out_qubits[i].dimension for i in ancillae])
+        unitary = unitary.reshape(new_dim, new_dim)
+    if diagonal:
+        unitary = np.diagonal(unitary)
+    return clean_array(unitary)
+
+
+def _build_validation_circuit(
+    circuit: QuantumCircuit,
+    qutrits=()
+):
     # Translate
     qubit_map = {qubit: i for i, qubit in enumerate(circuit.qubits)}
     num_qubits = len(qubit_map)  # circuit.num_qubits is not reduced after remove_idle_wires
@@ -46,21 +68,7 @@ def circuit_unitary(
                 print(qubits)
                 raise
 
-    unitary = out_circuit.unitary(qubit_order=out_qubits[::-1])
-    if ancillae:
-        shape = tuple(qubit.dimension for qubit in out_qubits[::-1])
-        unitary = unitary.reshape(shape + shape)
-        source = tuple(num_qubits - i - 1 for i in ancillae)
-        source += tuple(2 * num_qubits - i - 1 for i in ancillae)
-        num_anc_axes = len(ancillae) * 2
-        dest = tuple(range(num_anc_axes))
-        unitary = np.moveaxis(unitary, source, dest)
-        unitary = unitary[(0,) * num_anc_axes]
-        new_dim = np.prod(shape) // np.prod([out_qubits[i].dimension for i in ancillae])
-        unitary = unitary.reshape(new_dim, new_dim)
-    if diagonal:
-        unitary = np.diagonal(unitary)
-    return clean_array(unitary)
+    return out_circuit, out_qubits
 
 
 def validate_circuit(
