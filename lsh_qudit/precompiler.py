@@ -101,8 +101,22 @@ class LSHPrecompiler(TransformationPass):
                 break
 
         # We want the qubits fixed to the initial layout
-        # -> Replace remaining SWAPs with 3 CXs so the downstream passes don't try to
-        # route the qubits
+        # -> Resolve the remaining CCZs and SWAPs so the downstream passes don't try to route the
+        # qubits
+        for node in dag.topological_op_nodes():
+            if node.op.name == 'swap':
+                subdag = DAGCircuit()
+                qreg = QuantumRegister(2)
+                subdag.add_qreg(qreg)
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                subdag.apply_operation_back(CXGate(), [qreg[1], qreg[0]])
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                dag.substitute_node_with_dag(node, subdag)
+            elif node.op.name == 'ccz':
+                hccz = np.zeros((2, 2, 2))
+                hccz[1, 1, 1] = np.pi
+                subdag = circuit_to_dag(parity_walk_up(diag_to_iz(hccz)))
+                dag.substitute_node_with_dag(node, subdag)
 
         return dag
 
