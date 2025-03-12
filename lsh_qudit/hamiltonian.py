@@ -239,18 +239,26 @@ def electric_3b_term(
                         inplace=True)
 
     else:
-        if BOSON_NLEVEL == 2:
-            if qp is None:
-                qp = QubitPlacement([('i', site), ('l', site), ('d0', site), ('d1', site),
-                                     ('o', site)])
-            circuit = QuantumCircuit(5)
-        elif BOSON_NLEVEL == 3:
-            if qp is None:
-                qp = QubitPlacement([('i', site), ('l', site), ('d', site), ('o', site)])
-            circuit = QuantumCircuit(4)
+        if qp is None:
+            if site % 2 == 0:
+                labels = ['l', 'o', 'i']
+            else:
+                labels = ['i', 'l', 'o']
+            if BOSON_NLEVEL == 2:
+                labels.insert(labels.index('o'), 'd1')
+                labels.insert(labels.index('o'), 'd0')
+            elif BOSON_NLEVEL == 3:
+                labels.insert(labels.index('o'), 'd')
+            qp = QubitPlacement([(lab, site) for lab in labels])
+
+        circuit = QuantumCircuit(qp.num_qubits)
+
         # 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
-        circuit.append(rccx_ctc_gate, [qp['i', site], qp['l', site], qp['o', site]])
+        if qp['i', site] < qp['l', site]:
+            circuit.append(rccx_ctc_gate, [qp['i', site], qp['l', site], qp['o', site]])
+        else:
+            circuit.append(rccx_cct_gate, [qp['i', site], qp['o', site], qp['l', site]])
         if BOSON_NLEVEL == 2:
             circuit.append(cq.to_gate({cq_unit: 0.5 * time_step}),
                            [qp['l', site], qp['d0', site], qp['d1', site]])
@@ -258,7 +266,10 @@ def electric_3b_term(
             circuit.append(cq.to_gate({cq_unit: 0.5 * time_step}),
                            [qp['l', site], qp['d', site]])
         circuit.rz(-0.5 * time_step, qp['l', site])
-        circuit.append(rccx_ctc_inv_gate, [qp['i', site], qp['l', site], qp['o', site]])
+        if qp['i', site] < qp['l', site]:
+            circuit.append(rccx_ctc_inv_gate, [qp['i', site], qp['l', site], qp['o', site]])
+        else:
+            circuit.append(rccx_cct_inv_gate, [qp['i', site], qp['o', site], qp['l', site]])
         circuit.x(qp['i'])
 
     return circuit, qp, qp
