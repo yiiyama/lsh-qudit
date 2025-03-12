@@ -61,52 +61,80 @@ def is_zero(angle):
         return angle.sympify() == 0
 
 
-def parity_network(angles: np.ndarray, name: Optional[str] = None):
+def parity_network(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """Generates a parity network circuit for linearly connected qubits with the given angles."""
     num_qubits = angles.ndim
     match num_qubits:
         case 2 | 3:
-            return _parity_walk_up(angles, name=name)
+            return parity_walk_up(angles, singles_front=singles_front, name=name)
         case 4:
             if all(is_zero(angle) for angle in angles[..., 0, :].flat):
-                return _parity_walk_4q_up_z1(angles, name=name)
+                return _parity_walk_4q_up_z1(angles, singles_front=singles_front, name=name)
             if all(is_zero(angle) for angle in angles[:, 0].flat):
-                return _parity_walk_4q_down_z2(angles, name=name)
+                return _parity_walk_4q_down_z2(angles, singles_front=singles_front, name=name)
             if (all(is_zero(angles[to_bin(idx, 4)]) for idx in range(5, 8))
                     or all(is_zero(angles[to_bin(idx, 4)]) for idx in range(9, 15))):
-                return _parity_walk_downr(angles, name=name)
-            return _parity_walk_upr(angles, name=name)
+                return parity_walk_downr(angles, singles_front=singles_front, name=name)
+            return parity_walk_upr(angles, singles_front=singles_front, name=name)
         case 5:
             if all(is_zero(angle) for angle in angles[..., 0, :].flat):
-                return _parity_walk_5q_up_z1(angles, name=name)
+                return _parity_walk_5q_up_z1(angles, singles_front=singles_front, name=name)
             if all(is_zero(angle) for angle in angles[:, :, 0].flat):
-                return _parity_walk_5q_up_z2(angles, name=name)
+                return _parity_walk_5q_up_z2(angles, singles_front=singles_front, name=name)
             if all(is_zero(angle) for angle in angles[:, 0].flat):
-                return _parity_walk_5q_down_z3(angles, name=name)
+                return _parity_walk_5q_down_z3(angles, singles_front=singles_front, name=name)
             if (all(is_zero(angles[to_bin(idx, 5)]) for idx in range(5, 8))
                     or all(is_zero(angles[to_bin(idx, 5)]) for idx in range(9, 15))
                     or all(is_zero(angles[to_bin(idx, 5)]) for idx in range(17, 31))):
-                return _parity_walk_downr(angles, name=name)
-            return _parity_walk_upr(angles, name=name)
+                return parity_walk_downr(angles, singles_front=singles_front, name=name)
+            return parity_walk_upr(angles, singles_front=singles_front, name=name)
         case _:
             raise NotImplementedError(f'Parity network for {num_qubits} is not implemented.')
 
 
-def _parity_walk_up(angles: np.ndarray, name: Optional[str] = None):
+def parity_walk_up(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """Generic non-recursive parity walk.
 
     CX count:
         nq=2: 2
         nq=3: 8
     """
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     _parity_walk_up_sub(tracer)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
+
     return tracer.circuit
 
 
-def _parity_walk_down(angles: np.ndarray, name: Optional[str] = None):
-    tracer = ParityTracer(angles, name=name)
+def parity_walk_down(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     _parity_walk_down_sub(tracer)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
+
     return tracer.circuit
 
 
@@ -129,7 +157,11 @@ def _parity_walk_up_sub(
             raise NotImplementedError(f'_parity_walk_sub for {num_qubits} qubits not implemented')
 
 
-def _parity_walk_down_sub(tracer: ParityTracer, num_qubits: Optional[int] = None, offset: int = 0):
+def _parity_walk_down_sub(
+    tracer: ParityTracer,
+    num_qubits: Optional[int] = None,
+    offset: int = 0
+):
     if num_qubits is None:
         num_qubits = tracer.num_qubits
     match num_qubits:
@@ -144,7 +176,11 @@ def _parity_walk_down_sub(tracer: ParityTracer, num_qubits: Optional[int] = None
             raise NotImplementedError(f'_parity_walk_sub for {num_qubits} qubits not implemented')
 
 
-def _parity_walk_4q_up_z1(angles: np.ndarray, name: Optional[str] = None):
+def _parity_walk_4q_up_z1(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """4Q parity network optimized for angles with **Z* form.
 
     Note that the parity of qubit 0 is tied to that of qubit 1 in this construction, so the short
@@ -154,7 +190,11 @@ def _parity_walk_4q_up_z1(angles: np.ndarray, name: Optional[str] = None):
     block1 = [6, 10, 12, 14]
     block2 = [7, 11, 15]
     block3 = [5, 9, 13]
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     if any(not is_zero(angles[to_bin(idx, 4)]) for idx in block1):
         _parity_walk_up_sub(tracer, num_qubits=3, offset=1)
     if any(not is_zero(angles[to_bin(idx, 4)]) for idx in [3] + block2):
@@ -166,10 +206,17 @@ def _parity_walk_4q_up_z1(angles: np.ndarray, name: Optional[str] = None):
         tracer.swap(0, 1)
         _parity_walk_up_sub(tracer, num_qubits=3, offset=1)
         tracer.swap(0, 1)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
-def _parity_walk_4q_down_z2(angles: np.ndarray, name: Optional[str] = None):
+def _parity_walk_4q_down_z2(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """4Q parity network optimized for angles with *Z** form.
 
     CX count: 18 (fixed Z2), 30 (else)
@@ -177,7 +224,11 @@ def _parity_walk_4q_down_z2(angles: np.ndarray, name: Optional[str] = None):
     block1 = [3, 5, 6, 7]
     block2 = [13, 14, 15]
     block3 = [9, 10, 11]
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     if any(not is_zero(angles[to_bin(idx, 4)]) for idx in block1):
         _parity_walk_down_sub(tracer, num_qubits=3)
     if any(not is_zero(angles[to_bin(idx, 4)]) for idx in [12] + block2):
@@ -189,17 +240,28 @@ def _parity_walk_4q_down_z2(angles: np.ndarray, name: Optional[str] = None):
         tracer.swap(3, 2)
         _parity_walk_down_sub(tracer, num_qubits=3)
         tracer.swap(3, 2)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
-def _parity_walk_5q_up_z1(angles: np.ndarray, name: Optional[str] = None):
+def _parity_walk_5q_up_z1(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """5Q parity network specialized for angles with ***Z* form.
 
     CX count: 42
     """
     block1 = list(range(6, 32, 4))
     block2 = list(range(7, 32, 4))
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
 
     if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block1):
         tracer.cx(2, 3)
@@ -218,17 +280,28 @@ def _parity_walk_5q_up_z1(angles: np.ndarray, name: Optional[str] = None):
             tracer.cx(2, 3)
             tracer.cx(1, 2)
         tracer.cx(0, 1)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
-def _parity_walk_5q_down_z3(angles: np.ndarray, name: Optional[str] = None):
+def _parity_walk_5q_down_z3(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """5Q parity network specialized for angles with *Z*** form.
 
     CX count: 42
     """
     block1 = list(range(9, 16))
     block2 = list(range(25, 32))
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
 
     if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block1):
         tracer.cx(2, 1)
@@ -247,10 +320,17 @@ def _parity_walk_5q_down_z3(angles: np.ndarray, name: Optional[str] = None):
             tracer.cx(2, 1)
             tracer.cx(3, 2)
         tracer.cx(4, 3)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
-def _parity_walk_5q_up_z2(angles: np.ndarray, name: Optional[str] = None):
+def _parity_walk_5q_up_z2(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """5Q parity network optimized for angles with **Z** form.
 
     Note that the parities of qubit 0 and 1 are tied to that of qubit 2 in this construction, so the
@@ -261,7 +341,11 @@ def _parity_walk_5q_up_z2(angles: np.ndarray, name: Optional[str] = None):
     block2 = [14, 22, 30]
     block3 = [13, 21, 29]
     block4 = [15, 23, 31]
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     if any(not is_zero(angles[to_bin(idx, 5)]) for idx in block1):
         _parity_walk_up_sub(tracer, num_qubits=3, offset=2)
     tracer.cx(1, 2)
@@ -278,10 +362,17 @@ def _parity_walk_5q_up_z2(angles: np.ndarray, name: Optional[str] = None):
     tracer.cx(0, 1)
     tracer.cx(1, 2)
     tracer.cx(0, 1)
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
-def _parity_walk_upr(angles: np.ndarray, name: Optional[str] = None):
+def parity_walk_upr(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """Recursively constructed parity network. Empirically known to use fewest CXs.
 
     The parity network is built sequentially in the increasing number of involved qubits. This
@@ -295,7 +386,11 @@ def _parity_walk_upr(angles: np.ndarray, name: Optional[str] = None):
               20 (no I3)
         nq=5: ?
     """
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     for nq in range(2, tracer.num_qubits + 1):
         # Each block covers reverse-order binaries of [2^{nq-1}+1, 2^nq]
         bin_indices = [to_bin(idx, tracer.num_qubits)[::-1]
@@ -311,7 +406,9 @@ def _parity_walk_upr(angles: np.ndarray, name: Optional[str] = None):
 
     for iq in range(tracer.num_qubits - 1, 0, -1):
         tracer.circuit.cx(iq - 1, iq)
-
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
@@ -342,14 +439,22 @@ def _parity_walk_upr_sub(tracer: ParityTracer, num_qubits: Optional[int] = None,
                                       ' implemented')
 
 
-def _parity_walk_downr(angles: np.ndarray, name: Optional[str] = None):
+def parity_walk_downr(
+    angles: np.ndarray,
+    singles_front: bool = True,
+    name: Optional[str] = None
+):
     """Recursively constructed parity network. Empirically known to use fewest CXs.
 
     The parity network is built sequentially in the increasing number of involved qubits. This
     allows ommission of circuit blocks if angles for certain contiguous parities are all zero. Each
     block of a given qubit number is constructed recursively from smaller qubit-number blocks.
     """
-    tracer = ParityTracer(angles, name=name)
+    if singles_front:
+        singles = None
+    else:
+        singles = set(to_bin(2 ** i, angles.ndim) for i in range(angles.ndim))
+    tracer = ParityTracer(angles, visited=singles, name=name)
     for nq in range(2, tracer.num_qubits + 1):
         # Each block covers reverse-order binaries of [2^{nq-1}+1, 2^nq]
         bin_indices = [to_bin(idx, tracer.num_qubits)
@@ -365,7 +470,9 @@ def _parity_walk_downr(angles: np.ndarray, name: Optional[str] = None):
 
     for iq in range(tracer.num_qubits - 1):
         tracer.circuit.cx(iq + 1, iq)
-
+    if not singles_front:
+        tracer.visited -= singles
+        tracer._apply_rz()
     return tracer.circuit
 
 
