@@ -118,6 +118,17 @@ class LSHPrecompiler(TransformationPass):
                 hccz[1, 1, 1] = np.pi
                 subdag = circuit_to_dag(parity_walk_up(diag_to_iz(hccz)))
                 dag.substitute_node_with_dag(node, subdag)
+            elif node.op.name == 'cp':
+                phi = node.op.params[0]
+                subdag = DAGCircuit()
+                qreg = QuantumRegister(2)
+                subdag.add_qreg(qreg)
+                subdag.apply_operation_back(RZGate(phi / 2.), [qreg[0]])
+                subdag.apply_operation_back(RZGate(phi / 2.), [qreg[1]])
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                subdag.apply_operation_back(RZGate(-phi / 2.), [qreg[1]])
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                dag.substitute_node_with_dag(node, subdag)
 
         return dag
 
@@ -433,8 +444,9 @@ class LSHPrecompiler(TransformationPass):
 
     def _replace_swapcx_ccz(self, dag: DAGCircuit, ccz_node: DAGOpNode, direction: int):
         qreg = list(dag.qregs.values())[0]
-        ordered_qubits = sorted(ccz_node.qargs, key=qreg.index)
-        nodes_on_cent = list(dag.nodes_on_wire(ordered_qubits[1], only_ops=True))
+        ordered_qargs = sorted(ccz_node.qargs, key=qreg.index)
+        print('ordered_qubits', ordered_qargs)
+        nodes_on_cent = list(dag.nodes_on_wire(ordered_qargs[1], only_ops=True))
         ccz_node_idx = nodes_on_cent.index(ccz_node)
         if direction > 0:
             outward = dag.op_successors
@@ -462,9 +474,13 @@ class LSHPrecompiler(TransformationPass):
         if test.op.name not in ['cx', 'swap'] or set(test.qargs) - set(ccz_node.qargs):
             return False
 
+        print('test op', test.op.name, test.qargs)
+
         twoq_node = test
-        other_wire = next(bit for bit in twoq_node.qargs if bit != ordered_qubits[1])
-        other_wire_idx = next(idx for idx, bit in enumerate(ccz_node.qargs) if bit == other_wire)
+        other_wire = next(bit for bit in twoq_node.qargs if bit != ordered_qargs[1])
+        print('other_wire', other_wire)
+        other_wire_idx = next(idx for idx, bit in enumerate(ordered_qargs) if bit == other_wire)
+        print('other_wire_idx', other_wire_idx)
         nodes_on_other = list(dag.nodes_on_wire(other_wire, only_ops=True))
         twoq_node_idx = nodes_on_other.index(twoq_node)
 
@@ -499,8 +515,8 @@ class LSHPrecompiler(TransformationPass):
                     for node in qcent_1q_nodes + qother_1q_nodes):
                 return False
 
-            ctrl = next(idx for idx, bit in enumerate(ccz_node.qargs) if bit == twoq_node.qargs[0])
-            targ = next(idx for idx, bit in enumerate(ccz_node.qargs) if bit == twoq_node.qargs[1])
+            ctrl = next(idx for idx, bit in enumerate(ordered_qargs) if bit == twoq_node.qargs[0])
+            targ = next(idx for idx, bit in enumerate(ordered_qargs) if bit == twoq_node.qargs[1])
 
             # All 1Q commute; move them to the other side of CX and align the CCZ decomposition
             for node in qcent_1q_nodes:
@@ -527,7 +543,8 @@ class LSHPrecompiler(TransformationPass):
                 case (-1, 2, 1):
                     pwalk = parity_walk_down
                 case _:
-                    raise ValueError('Wrong direction value?')
+                    raise ValueError('Wrong direction value? (dir, ctrl, targ)='
+                                     f'{(direction, ctrl, targ)}')
         else:
             # Move all 1Q nodes to the other side of the SWAP
             for node in qcent_1q_nodes:
@@ -545,7 +562,8 @@ class LSHPrecompiler(TransformationPass):
                 case (-1, 2):
                     pwalk = parity_walk_down
                 case _:
-                    raise ValueError('Wrong direction value?')
+                    raise ValueError('Wrong direction value? (dir, other_wire_idx)='
+                                     f'{(direction, other_wire_idx)}')
 
             apply_inward(CXGate(), [qreg[other_wire_idx], qreg[1]])
             apply_inward(CXGate(), [qreg[1], qreg[other_wire_idx]])
@@ -554,7 +572,9 @@ class LSHPrecompiler(TransformationPass):
         # pylint: disable-next=used-before-assignment
         pwalk_dag = circuit_to_dag(pwalk(angles, singles_front=direction > 0))
         if direction > 0:
-            subdag = pwalk_dag.compose(subdag, inplace=False)
+            pwalk_dag.compose(subdag, inplace=True)
+            subdag = pwalk_dag
+            qreg = list(subdag.qregs.values())[0]
         else:
             subdag.compose(pwalk_dag, inplace=True)
 
@@ -562,5 +582,6 @@ class LSHPrecompiler(TransformationPass):
         for node in qcent_1q_nodes + qother_1q_nodes + [twoq_node]:
             dag.remove_op_node(node)
 
-        dag.substitute_node_with_dag(ccz_node, subdag)
+        dag.substitute_node_with_dag(ccz_node, subdag,
+                                     wires=dict(zip(qreg, ordered_qargs)))
         return True
