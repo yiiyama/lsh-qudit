@@ -228,15 +228,20 @@ def electric_3b_term(
 
     elif np.amax(lvals) == 1:
         if qp is None:
-            qp = QubitPlacement([('i', site), ('o', site), ('l', site)])
-        circuit = QuantumCircuit(3)
+            if site % 2 == 0:
+                labels = ['l', 'o', 'i']
+            else:
+                labels = ['i', 'l', 'o']
+            qp = QubitPlacement([(lab, site) for lab in labels])
+
+        circuit = QuantumCircuit(qp.num_qubits)
         # 1/2 n_l n_o (1 - n_i)
         coeffs = np.zeros((2, 2, 2))
-        coeffs[1, 1, 0] = 0.5
+        idx = [1, 1, 1]
+        idx[2 - qp['i', site]] = 0
+        coeffs[tuple(idx)] = 0.5
         coeffs = diag_to_iz(coeffs)
-        circuit.compose(parity_network(coeffs * time_step),
-                        qubits=[qp['i', site], qp['o', site], qp['l', site]],
-                        inplace=True)
+        circuit.compose(parity_network(coeffs * time_step), inplace=True)
 
     else:
         if qp is None:
