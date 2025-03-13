@@ -445,7 +445,6 @@ class LSHPrecompiler(TransformationPass):
     def _replace_swapcx_ccz(self, dag: DAGCircuit, ccz_node: DAGOpNode, direction: int):
         qreg = list(dag.qregs.values())[0]
         ordered_qargs = sorted(ccz_node.qargs, key=qreg.index)
-        print('ordered_qubits', ordered_qargs)
         nodes_on_cent = list(dag.nodes_on_wire(ordered_qargs[1], only_ops=True))
         ccz_node_idx = nodes_on_cent.index(ccz_node)
         if direction > 0:
@@ -474,13 +473,9 @@ class LSHPrecompiler(TransformationPass):
         if test.op.name not in ['cx', 'swap'] or set(test.qargs) - set(ccz_node.qargs):
             return False
 
-        print('test op', test.op.name, test.qargs)
-
         twoq_node = test
         other_wire = next(bit for bit in twoq_node.qargs if bit != ordered_qargs[1])
-        print('other_wire', other_wire)
         other_wire_idx = next(idx for idx, bit in enumerate(ordered_qargs) if bit == other_wire)
-        print('other_wire_idx', other_wire_idx)
         nodes_on_other = list(dag.nodes_on_wire(other_wire, only_ops=True))
         twoq_node_idx = nodes_on_other.index(twoq_node)
 
