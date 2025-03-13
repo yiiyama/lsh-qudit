@@ -478,80 +478,68 @@ def hopping_usvd(
         return qp.swap(config.qubit_labels[label1], config.qubit_labels[label2])
 
     if (term_type, site % 2) in [(1, 0), (2, 1)]:
+        # x' as the SVD key qubit
         # Default QP
         # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
         # (2, 1): ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
-        if config.boson_ops['q'][0] == 'X':
-            circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
-        elif config.boson_ops['q'][0] == 'lambda':
-            circuit.append(clambdaminusc_gate, [qpl("y"), qpl("q"), qpl("y'"), qpl("qd")])
+        circuit.x(qpl("x'"))
+        circuit.x(qpl("x"))
+        if config.boson_ops['p'][0] == 'X':
+            circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
+        elif config.boson_ops['p'][0] == 'lambda':
+            if term_type == 1:
+                circuit.append(cclambdaminus_gate, [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")])
+            else:
+                circuit.append(cclambdaminus_gate, [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")])
+        circuit.x(qpl("x"))
 
         # Bring y' next to x' and do CX
         if term_type == 2:
             qp = swap("x'", "p")
-        circuit.cx(qpl("y'"), qpl("x'"))
+        circuit.cx(qpl("x'"), qpl("y'"))
 
         # Current QP
         # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
         # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"]
-        if config.boson_ops['p'][0] == 'X':
-            # Need y' x p contiguous (order doesn't matter)
-            qp = swap("y'", "x'")
-            circuit.x(qpl("x"))
-            circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
-            circuit.x(qpl("x"))
-        elif config.boson_ops['p'][0] == 'lambda':
-            # y'-p-x desired; contiguous is fine. p must be on the original qubit
-            circuit.x(qpl("x"))
-            if term_type == 1:
-                qp = swap("y'", "x'")
-                circuit.append(cclambdaminus_gate, [qpl("y'"), qpl("x"), qpl("p"), qpl("pd")])
-            else:
-                qp = swap("x'", "p")
-                qp = swap("x'", "x")
-                circuit.append(clambdaminusc_gate, [qpl("y'"), qpl("p"), qpl("x"), qpl("pd")])
-            circuit.x(qpl("x"))
+        # Need x' y q contiguous
+        qp = swap("y'", "x'")
+        if config.boson_ops['q'][0] == 'X':
+            circuit.ccx(qpl("x'"), qpl("y"), qpl("q"))
+        elif config.boson_ops['q'][0] == 'lambda':
+            circuit.append(clambdaminusc_gate, [qpl("x'"), qpl("q"), qpl("y"), qpl("qd")])
 
-        circuit.h(qpl("y'"))
-
+        circuit.x(qpl("x'"))
+        circuit.h(qpl("x'"))
     else:
+        # y' as the SVD key qubit
         # Default QP
         # (1, 1): ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
         # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
-        circuit.x(qpl("x'"))
-
-        if config.boson_ops['p'][0] == 'X':
-            circuit.x(qpl("x"))
-            circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
-            circuit.x(qpl("x"))
-        elif config.boson_ops['p'][0] == 'lambda':
-            circuit.x(qpl("x"))
-            circuit.append(clambdaminusc_gate, [qpl("x"), qpl("p"), qpl("x'"), qpl("pd")])
-            circuit.x(qpl("x"))
+        if config.boson_ops['q'][0] == 'X':
+            circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
+        elif config.boson_ops['q'][0] == 'lambda':
+            if term_type == 1:
+                circuit.append(cclambdaminus_gate, [qpl("y"), qpl("y'"), qpl("q"), qpl("qd")])
+            else:
+                circuit.append(cclambdaminus_gate, [qpl("y'"), qpl("y"), qpl("q"), qpl("qd")])
 
         if term_type == 1:
             qp = swap("y'", "q")
-        circuit.cx(qpl("x'"), qpl("y'"))
+        circuit.cx(qpl("y'"), qpl("x'"))
 
         # Current QP
         # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
         # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
-        if config.boson_ops['q'][0] == 'X':
-            # Need x' y q contiguous (order doesn't matter)
-            qp = swap("y'", "x'")
-            circuit.ccx(qpl("x'"), qpl("y"), qpl("q"))
+        # Need y' x p contiguous
+        qp = swap("y'", "x'")
+        circuit.x(qpl("x"))
+        if config.boson_ops['p'][0] == 'X':
+            circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         elif config.boson_ops['q'][0] == 'lambda':
-            # x'-q-y desired; contiguous is fine. q must be on the original qubit
-            if term_type == 2:
-                qp = swap("y'", "x'")
-                circuit.append(cclambdaminus_gate, [qpl("x'"), qpl("y"), qpl("q"), qpl("qd")])
-            else:
-                qp = swap("y'", "q")
-                qp = swap("y'", "y")
-                circuit.append(clambdaminusc_gate, [qpl("x'"), qpl("q"), qpl("y"), qpl("qd")])
+            circuit.append(clambdaminusc_gate, [qpl("y'"), qpl("p"), qpl("x"), qpl("pd")])
+        circuit.x(qpl("x"))
 
-        circuit.x(qpl("x'"))
-        circuit.h(qpl("x'"))
+        circuit.h(qpl("y'"))
 
     return circuit, init_p, qp
 
@@ -571,17 +559,18 @@ def hopping_diagonal_op(
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
     states = config.gl_states.copy()
     if (term_type, site % 2) in [(1, 0), (2, 1)]:
-        idx = config.indices["y'"]
-        mask_fp = states[:, idx] == 1
-        idx = config.indices["x'"]
-        states[mask_fp, idx] *= -1
-        states[mask_fp, idx] += 1
-    else:
         idx = config.indices["x'"]
         mask_fp = states[:, idx] == 0
         idx = config.indices["y'"]
         states[mask_fp, idx] *= -1
         states[mask_fp, idx] += 1
+    else:
+        idx = config.indices["y'"]
+        mask_fp = states[:, idx] == 1
+        idx = config.indices["x'"]
+        states[mask_fp, idx] *= -1
+        states[mask_fp, idx] += 1
+
     mask = mask_fp & (states[:, config.indices["y"]] == 1)
     idx = config.indices["q"]
     if config.boson_ops['q'][0] == 'lambda':
@@ -616,15 +605,16 @@ def hopping_diagonal_op(
     op_dims += ["x", "y", "x'", "y'"]
 
     if (term_type, site % 2) in [(1, 0), (2, 1)]:
-        # Project onto x' == 1 and multiply Zy'
-        states = states[states[:, config.indices["x'"]] == 1]
-        diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
-        diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
-    else:
         # Project onto y' == 0 and multiply Zx'
         states = states[states[:, config.indices["y'"]] == 0]
         diag_op *= np.expand_dims(np.array([1., 0.]), [0, 1, 2, 3])
         diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 4])
+    else:
+        # Project onto x' == 1 and multiply Zy'
+        states = states[states[:, config.indices["x'"]] == 1]
+        diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
+        diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
+
     # Zx
     diag_op *= np.expand_dims(np.array([1., -1.]), [0, 2, 3, 4])
 
@@ -701,30 +691,20 @@ def hopping_diagonal_term(
     # op_dims as qubit labels
     reverse_map = {value: key for key, value in config.qubit_labels.items()}
 
-    # QP inherited from Usvd function                      (last incrementer)
-    # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"] (p=id)
-    #         ["p", "pd", "x", "y'", "x'", "q", "qd", "y"] (p=X, lambda)
-    # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"] (q=id)
-    #         ["x", "p", "pd", "y'", "x'", "q", "qd", "y"] (q=X)
-    #         ["x", "p", "pd", "x'", "q", "qd", "y", "y'"] (q=lambda)
-    # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"] (q=id)
-    #         ["q", "qd", "y", "x'", "y'", "p", "pd", "x"] (q=X, lambda)
-    # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"] (p=id)
-    #         ["y", "q", "qd", "x'", "y'", "pd", "p", "x"] (p=X)
-    #         ["y", "q", "qd", "y'", "p", "pd", "x", "x'"] (p=lambda)
+    # Final QP of Usvd
+    # (1, 0): ["p", "pd", "x", "y'", "x'", "q", "qd", "y"]
+    # (1, 1): ["x", "p", "pd", "y'", "x'", "q", "qd", "y"]
+    # (2, 0): ["q", "qd", "y", "x'", "y'", "p", "pd", "x"]
+    # (2, 1): ["y", "q", "qd", "x'", "y'", "p", "pd", "x"]
     match (term_type, site % 2, config.boson_ops["p"][1], config.boson_ops["q"][1]):
         case (1, 0, 'id', 'zero'):
             swaps = []
         case (1, 1, 'zero', 'id'):
             swaps = [("q", "y")]
-            if config.boson_ops["q"][0] == 'lambda':
-                swaps.append(("q", "y'"))
         case (2, 0, 'zero', 'id'):
             swaps = []
         case (2, 1, 'id', 'zero'):
             swaps = [("p", "x")]
-            if config.boson_ops["p"][0] == 'lambda':
-                swaps.append(("p", "x'"))
         case _:
             raise NotImplementedError('General diagonal term not implemented')
 
