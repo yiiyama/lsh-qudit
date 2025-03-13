@@ -82,7 +82,7 @@ class LSHPrecompiler(TransformationPass):
         # Decompose the remaining custom gates to expose the CXs
         gates_to_decompose = (
             'rccx_cct', 'rccx_cct_dg', 'rccx_ctc', 'rccx_ctc_dg',
-            r'c$\lambda^{-}$', r'c$\lambda^{-}$_dg'
+            r'c$\lambda^{-}$', r'c$\lambda^{-}$_dg', 'cq'
         )
         for node in dag.topological_op_nodes():
             if node.op.name not in gates_to_decompose:
