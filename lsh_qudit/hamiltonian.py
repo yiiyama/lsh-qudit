@@ -717,6 +717,8 @@ def hopping_diagonal_term(
             swaps = []
         case (1, 1, 'zero', 'id'):
             swaps = [("q", "y")]
+            if config.boson_ops["q"][0] == 'lambda':
+                swaps.append(("q", "y'"))
         case (2, 0, 'zero', 'id'):
             swaps = []
         case (2, 1, 'id', 'zero'):
