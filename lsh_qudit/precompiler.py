@@ -117,7 +117,9 @@ class LSHPrecompiler(TransformationPass):
                 hccz = np.zeros((2, 2, 2))
                 hccz[1, 1, 1] = np.pi
                 subdag = circuit_to_dag(parity_walk_up(diag_to_iz(hccz)))
-                dag.substitute_node_with_dag(node, subdag)
+                ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
+                dag.substitute_node_with_dag(node, subdag,
+                                             wires=dict(zip(subdag.qubits, ordered_qargs)))
             elif node.op.name == 'cp':
                 phi = node.op.params[0]
                 subdag = DAGCircuit()
