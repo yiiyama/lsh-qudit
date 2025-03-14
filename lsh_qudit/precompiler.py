@@ -29,32 +29,7 @@ class LSHPrecompiler(TransformationPass):
     three CXs to avoid qubits getting routed by the transpiler.
     """
     def run(self, dag: DAGCircuit) -> DAGCircuit:
-        # Incrementer-decrementer pair (including CCX-CCX)
-        while True:
-            # We restart the op_nodes iteration after each successful cancellation since DAG is
-            # modified
-            for node in dag.topological_op_nodes():
-                op_name = node.op.name
-                if op_name.startswith(r'cc$\lambda^{-}$') or op_name.startswith(r'c$\lambda^{-}$c'):
-                    if (op_name.endswith('_dg') and len((suc := list(dag.op_successors(node)))) == 1
-                            and suc[0].op.name == op_name[:-3]):
-                        dag.remove_op_node(node)
-                        dag.remove_op_node(suc[0])
-                        break
-                    else:
-                        subdag = circuit_to_dag(node.op.definition)
-                        dag.substitute_node_with_dag(node, subdag)
-
-                elif (op_name == 'ccx' and len((suc := list(dag.op_successors(node)))) == 1
-                      and suc[0].op.name == 'ccx' and suc[0].qargs == node.qargs):
-                    dag.remove_op_node(node)
-                    dag.remove_op_node(suc[0])
-                    break
-            else:
-                # Looped through op_nodes
-                break
-
-        # Replace all CCXs with H-CCZ-H
+        # Replace all CCXs with H-CCZ-H and CCX+/-s with RCCX-CX+--RCCX
         for node in dag.topological_op_nodes():
             if node.op.name == 'ccx':
                 subdag = DAGCircuit()
@@ -64,30 +39,52 @@ class LSHPrecompiler(TransformationPass):
                 subdag.apply_operation_back(CCZGate(), [qreg[0], qreg[1], qreg[2]])
                 subdag.apply_operation_back(HGate(), [qreg[2]])
                 dag.substitute_node_with_dag(node, subdag)
+            elif node.op.name in ('ccxminus', 'ccxplus'):
+                subdag = circuit_to_dag(node.op.definition)
+                dag.substitute_node_with_dag(node, subdag)
 
         # RCCX-SWAP/CX and CCZ-SWAP/CX
         while True:
             for node in dag.topological_op_nodes():
-                if node.op.name.startswith('rccx_cct') and self._replace_swap_rccx_cct(dag, node):
-                    break
-                if node.op.name.startswith('rccx_ctc') and self._replace_swap_rccx_ctc(dag, node):
-                    break
-                if node.op.name == 'ccz' and self._replace_swapcx_ccz(dag, node, 1):
-                    break
-                if node.op.name == 'ccz' and self._replace_swapcx_ccz(dag, node, -1):
+                if node.op.name == 'rccx':
+                    ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
+                    if node.qargs[2] == ordered_qargs[1]:
+                        if self._replace_swap_rccx_ctc(dag, node):
+                            break
+                    else:
+                        if self._replace_swap_rccx_cct(dag, node):
+                            break
+                if (node.op.name == 'ccz'
+                        and (self._replace_swapcx_ccz(dag, node, 1)
+                             or self._replace_swapcx_ccz(dag, node, -1))):
                     break
             else:
                 break
 
         # Decompose the remaining custom gates to expose the CXs
-        gates_to_decompose = (
-            'rccx_cct', 'rccx_cct_dg', 'rccx_ctc', 'rccx_ctc_dg',
-            r'c$\lambda^{-}$', r'c$\lambda^{-}$_dg', 'cq'
-        )
         for node in dag.topological_op_nodes():
-            if node.op.name not in gates_to_decompose:
+            if node.op.name == 'rccx':
+                ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
+                if node.qargs[2] == ordered_qargs[1]:
+                    subdag = circuit_to_dag(node.op.definition)
+                else:
+                    # Compile for linear topology
+                    subdag = DAGCircuit()
+                    qreg = QuantumRegister(3)
+                    subdag.add_qreg(qreg)
+                    subdag.apply_operation_back(RYGate(-np.pi / 4.), [qreg[2]])
+                    subdag.apply_operation_back(CXGate(), [qreg[2], qreg[1]])
+                    subdag.apply_operation_back(CXGate(), [qreg[1], qreg[2]])
+                    subdag.apply_operation_back(RYGate(-np.pi / 4.), [qreg[1]])
+                    subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                    subdag.apply_operation_back(RYGate(np.pi / 4.), [qreg[1]])
+                    subdag.apply_operation_back(CXGate(), [qreg[1], qreg[2]])
+                    subdag.apply_operation_back(CXGate(), [qreg[2], qreg[1]])
+                    subdag.apply_operation_back(RYGate(np.pi / 4.), [qreg[2]])
+            elif node.op.name in ('cxminus', 'cxplus', 'cq'):
+                subdag = circuit_to_dag(node.op.definition)
+            else:
                 continue
-            subdag = circuit_to_dag(node.op.definition)
             mapping = {qubit: qarg for qubit, qarg in zip(subdag.qubits, node.qargs)}
             dag.substitute_node_with_dag(node, subdag, wires=mapping)
 
@@ -134,10 +131,10 @@ class LSHPrecompiler(TransformationPass):
 
         return dag
 
-    def _replace_swapcx_swapcp(self, dag: DAGCircuit, swapcp_node: DAGOpNode, direction: int):
+    def _replace_swapcx_swapcp(self, dag: DAGCircuit, swapcp_node: DAGOpNode, out_incr: int):
         nodes_on_q0 = list(dag.nodes_on_wire(swapcp_node.qargs[0], only_ops=True))
         swap_node_idx = nodes_on_q0.index(swapcp_node)
-        if direction > 0:
+        if out_incr > 0:
             outward = dag.op_successors
             inward = dag.op_predecessors
             out_incr = 1
@@ -182,7 +179,7 @@ class LSHPrecompiler(TransformationPass):
         subdag = DAGCircuit()
         qreg = QuantumRegister(2)
         subdag.add_qreg(qreg)
-        if direction > 0:
+        if out_incr > 0:
             apply_outward = subdag.apply_operation_back
             apply_inward = subdag.apply_operation_front
         else:
@@ -215,8 +212,8 @@ class LSHPrecompiler(TransformationPass):
 
                 for nodes, qubit in [(list(q0_1q_nodes), qreg[0]),
                                      (list(q1_1q_nodes[::-1]), qreg[1])]:
-                    cp_side = 0 if direction > 0 else -1
-                    cx_side = -1 if direction > 0 else 0
+                    cp_side = 0 if out_incr > 0 else -1
+                    cx_side = -1 if out_incr > 0 else 0
                     cp_side_nodes = []
                     cx_side_nodes = []
                     while nodes:
@@ -260,18 +257,20 @@ class LSHPrecompiler(TransformationPass):
         nodes_on_t = list(dag.nodes_on_wire(target_qubit, only_ops=True))
         rccx_node_idx = nodes_on_t.index(rccx_node)
 
-        if rccx_node.op.name.endswith('_dg'):
-            outward = dag.op_successors
-            inward = dag.op_predecessors
-            out_incr = 1
-            if rccx_node_idx == len(nodes_on_t) - 1:
-                return False
-        else:
+        if any(node.op.name == 'rccx' for node in dag.op_successors(rccx_node)):
             outward = dag.op_predecessors
             inward = dag.op_successors
-            out_incr = -1
             if rccx_node_idx == 0:
                 return False
+            # Will explore to the left
+            out_incr = -1
+        else:
+            outward = dag.op_successors
+            inward = dag.op_predecessors
+            if rccx_node_idx == len(nodes_on_t) - 1:
+                return False
+            # Will explore to the right
+            out_incr = 1
 
         test = nodes_on_t[rccx_node_idx + out_incr]
         # Trace outward the 1Q run
@@ -310,7 +309,7 @@ class LSHPrecompiler(TransformationPass):
         subdag = DAGCircuit()
         qreg = QuantumRegister(3)  # Maps to c1, c2, t
         subdag.add_qreg(qreg)
-        if rccx_node.op.name.endswith('_dg'):
+        if out_incr > 0:
             apply_outward = subdag.apply_operation_back
             apply_inward = subdag.apply_operation_front
             angle = np.pi / 4.
@@ -336,22 +335,30 @@ class LSHPrecompiler(TransformationPass):
         return True
 
     def _replace_swap_rccx_ctc(self, dag: DAGCircuit, rccx_node: DAGOpNode):
-        target_qubit = rccx_node.qargs[1]
+        target_qubit = rccx_node.qargs[2]
         nodes_on_t = list(dag.nodes_on_wire(target_qubit, only_ops=True))
         rccx_node_idx = nodes_on_t.index(rccx_node)
 
-        if rccx_node.op.name.endswith('_dg'):
+        try:
+            inverse_node = next(node for node in dag.op_successors(rccx_node)
+                                if node.op.name == 'rccx')
+        except StopIteration:
+            inverse_node = next(node for node in dag.op_predecessors(rccx_node)
+                                if node.op.name == 'rccx')
             outward = dag.op_successors
             inward = dag.op_predecessors
             out_incr = 1
             if rccx_node_idx == len(nodes_on_t) - 1:
                 return False
+            # Will explore to the right
+            out_incr = 1
         else:
             outward = dag.op_predecessors
             inward = dag.op_successors
-            out_incr = -1
             if rccx_node_idx == 0:
                 return False
+            # Will explore to the left
+            out_incr = -1
 
         test = nodes_on_t[rccx_node_idx + out_incr]
         # Trace back the 1Q run
@@ -389,36 +396,11 @@ class LSHPrecompiler(TransformationPass):
         for node in t_1q_nodes + c2_1q_nodes + [swap_node]:
             dag.remove_op_node(node)
 
-        # If the qargs order is going to change, transpose the inverse gate
-        # (because RCCX has asymmetric relative phases between C1 and C2)
-        if rccx_node.qargs[0] != control_qubit:
-            inverse_node = next(tn for tn in inward(rccx_node) if tn.op.name.startswith('rccx_ctc'))
-            subdag = DAGCircuit()
-            qreg = QuantumRegister(3)  # Maps to c1, t, c2
-            subdag.add_qreg(qreg)
-            if rccx_node.op.name.endswith('_dg'):
-                apply_inward = subdag.apply_operation_front
-                angle = np.pi / 4.
-            else:
-                apply_inward = subdag.apply_operation_back
-                angle = -np.pi / 4.
-            # Apply the 1Q gates on t to the new c, and vice versa
-            apply_inward(RYGate(angle), [qreg[1]])
-            apply_inward(CXGate(), [qreg[0], qreg[1]])
-            apply_inward(RYGate(angle), [qreg[1]])
-            apply_inward(CXGate(), [qreg[2], qreg[1]])
-            apply_inward(RYGate(-angle), [qreg[1]])
-            apply_inward(CXGate(), [qreg[0], qreg[1]])
-            apply_inward(RYGate(-angle), [qreg[1]])
-
-            wires = {qreg[0]: control_qubit, qreg[1]: target_qubit, qreg[2]: idle_qubit}
-            dag.substitute_node_with_dag(inverse_node, subdag, wires=wires)
-
         # Substitute the RCCX node with the decomposed and simplified RCCX-SWAP-1Q sequence
         subdag = DAGCircuit()
         qreg = QuantumRegister(3)  # Maps to c1, t, c2
         subdag.add_qreg(qreg)
-        if rccx_node.op.name.endswith('_dg'):
+        if out_incr > 0:
             apply_outward = subdag.apply_operation_back
             apply_inward = subdag.apply_operation_front
             angle = np.pi / 4.
@@ -442,23 +424,42 @@ class LSHPrecompiler(TransformationPass):
 
         wires = {qreg[0]: control_qubit, qreg[1]: target_qubit, qreg[2]: idle_qubit}
         dag.substitute_node_with_dag(rccx_node, subdag, wires=wires)
+
+        # Substitute the inverse node
+        subdag = DAGCircuit()
+        qreg = QuantumRegister(3)  # Maps to c1, t, c2
+        subdag.add_qreg(qreg)
+        if out_incr > 0:
+            apply_inward = subdag.apply_operation_front
+            angle = np.pi / 4.
+        else:
+            apply_inward = subdag.apply_operation_back
+            angle = -np.pi / 4.
+        apply_inward(RYGate(angle), [qreg[1]])
+        apply_inward(CXGate(), [qreg[0], qreg[1]])
+        apply_inward(RYGate(angle), [qreg[1]])
+        apply_inward(CXGate(), [qreg[2], qreg[1]])
+        apply_inward(RYGate(-angle), [qreg[1]])
+        apply_inward(CXGate(), [qreg[0], qreg[1]])
+        apply_inward(RYGate(-angle), [qreg[1]])
+
+        wires = {qreg[0]: control_qubit, qreg[1]: target_qubit, qreg[2]: idle_qubit}
+        dag.substitute_node_with_dag(inverse_node, subdag, wires=wires)
         return True
 
-    def _replace_swapcx_ccz(self, dag: DAGCircuit, ccz_node: DAGOpNode, direction: int):
+    def _replace_swapcx_ccz(self, dag: DAGCircuit, ccz_node: DAGOpNode, out_incr: int):
         qreg = list(dag.qregs.values())[0]
         ordered_qargs = sorted(ccz_node.qargs, key=qreg.index)
         nodes_on_cent = list(dag.nodes_on_wire(ordered_qargs[1], only_ops=True))
         ccz_node_idx = nodes_on_cent.index(ccz_node)
-        if direction > 0:
+        if out_incr > 0:
             outward = dag.op_successors
             inward = dag.op_predecessors
-            out_incr = 1
             if ccz_node_idx == len(nodes_on_cent) - 1:
                 return False
         else:
             outward = dag.op_predecessors
             inward = dag.op_successors
-            out_incr = -1
             if ccz_node_idx == 0:
                 return False
 
@@ -496,7 +497,7 @@ class LSHPrecompiler(TransformationPass):
         subdag = DAGCircuit()
         qreg = QuantumRegister(3)
         subdag.add_qreg(qreg)
-        if direction > 0:
+        if out_incr > 0:
             apply_outward = subdag.apply_operation_back
             apply_inward = subdag.apply_operation_front
         else:
@@ -522,7 +523,7 @@ class LSHPrecompiler(TransformationPass):
                 apply_inward(node.op, [qreg[other_wire_idx]])
             apply_inward(CXGate(), [qreg[ctrl], qreg[targ]])
 
-            match (direction, ctrl, targ):
+            match (out_incr, ctrl, targ):
                 case (1, 0, 1):
                     pwalk = parity_walk_upr
                 case (1, 1, 0):
@@ -540,8 +541,8 @@ class LSHPrecompiler(TransformationPass):
                 case (-1, 2, 1):
                     pwalk = parity_walk_down
                 case _:
-                    raise ValueError('Wrong direction value? (dir, ctrl, targ)='
-                                     f'{(direction, ctrl, targ)}')
+                    raise ValueError('Wrong out_incr value? (dir, ctrl, targ)='
+                                     f'{(out_incr, ctrl, targ)}')
         else:
             # Move all 1Q nodes to the other side of the SWAP
             for node in qcent_1q_nodes:
@@ -549,7 +550,7 @@ class LSHPrecompiler(TransformationPass):
             for node in qother_1q_nodes:
                 apply_inward(node.op, [qreg[1]])
 
-            match (direction, other_wire_idx):
+            match (out_incr, other_wire_idx):
                 case (1, 0):
                     pwalk = parity_walk_upr
                 case (1, 2):
@@ -559,16 +560,16 @@ class LSHPrecompiler(TransformationPass):
                 case (-1, 2):
                     pwalk = parity_walk_down
                 case _:
-                    raise ValueError('Wrong direction value? (dir, other_wire_idx)='
-                                     f'{(direction, other_wire_idx)}')
+                    raise ValueError('Wrong out_incr value? (dir, other_wire_idx)='
+                                     f'{(out_incr, other_wire_idx)}')
 
             apply_inward(CXGate(), [qreg[other_wire_idx], qreg[1]])
             apply_inward(CXGate(), [qreg[1], qreg[other_wire_idx]])
             apply_inward(CXGate(), [qreg[other_wire_idx], qreg[1]])
 
         # pylint: disable-next=used-before-assignment
-        pwalk_dag = circuit_to_dag(pwalk(angles, singles_front=direction > 0))
-        if direction > 0:
+        pwalk_dag = circuit_to_dag(pwalk(angles, singles_front=out_incr > 0))
+        if out_incr > 0:
             pwalk_dag.compose(subdag, inplace=True)
             subdag = pwalk_dag
             qreg = list(subdag.qregs.values())[0]

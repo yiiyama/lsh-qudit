@@ -2,123 +2,198 @@ from collections import namedtuple
 from numbers import Number
 from typing import Optional, Union
 import numpy as np
-from qiskit import QuantumCircuit
-from qiskit.circuit import Parameter, ParameterExpression
-from qiskit.quantum_info import SparsePauliOp
-from qutrit_experiments.gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate,
-                                      XminusGate, QubitQutritCRxMinusPiGate,
-                                      QubitQutritCRxPlusPiGate)
-from .utils import QubitPlacement, op_matrix, physical_states, diag_to_iz
+from qiskit import QuantumCircuit, QuantumRegister
+from qiskit.circuit import Gate, ParameterExpression
+from .gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate, XminusGate,
+                    ParameterValueType, QubitQutritCompositeGate,
+                    QubitQutritCRxMinusPiGate, QubitQutritCRxPlusPiGate)
+from .utils import QubitPlacement, physical_states, diag_to_iz
 from .parity_network import parity_network
 
 
-BT = 3
-BOSON_NLEVEL = 3
+BOSON_TRUNC = 3
+USE_QUTRIT = True
 
-sqrt2 = np.sqrt(2.)
-sqrt3 = np.sqrt(3.)
 
-paulii = SparsePauliOp('I')
-paulix = SparsePauliOp('X')
-pauliy = SparsePauliOp('Y')
-pauliz = SparsePauliOp('Z')
-hadamard = (paulix + pauliz) / sqrt2
-p0 = SparsePauliOp(['I', 'Z'], [0.5, 0.5])
-p1 = SparsePauliOp(['I', 'Z'], [0.5, -0.5])
+class RCCXGate(Gate):
+    """RCCX gate."""
+    def __init__(self, label: Optional[str] = None):
+        """Create new RCCX gate."""
+        super().__init__("rccx", 3, [], label=label)
 
-sigmaplus = (paulix + 1.j * pauliy) * 0.5  # |0><1|
-sigmaminus = (paulix - 1.j * pauliy) * 0.5  # |0><1|
-cyc_incr = np.zeros((3, 3), dtype=np.complex128)
-cyc_incr[[0, 1, 2], [2, 0, 1]] = 1.
-incr = cyc_incr @ np.diagflat([1., 1., 0.])
-cincr = np.zeros((6, 6), dtype=np.complex128)
-cincr[:3, :3] = np.eye(3, dtype=np.complex128)
-cincr[3:, 3:] = incr
-ocincr = np.zeros((6, 6), dtype=np.complex128)
-ocincr[:3, :3] = incr
-ocincr[3:, 3:] = np.eye(3, dtype=np.complex128)
+    def _define(self):
+        qr = QuantumRegister(3, 'q')
+        qc = QuantumCircuit(qr, name=self.name)
+        qc.ry(-np.pi / 4., qr[2])
+        qc.cx(qr[1], qr[2])
+        qc.ry(-np.pi / 4., qr[2])
+        qc.cx(qr[0], qr[2])
+        qc.ry(np.pi / 4., qr[2])
+        qc.cx(qr[1], qr[2])
+        qc.ry(np.pi / 4., qr[2])
+        self.definition = qc
 
-rccx_ctc = QuantumCircuit(3, name='rccx_ctc')
-rccx_ctc.ry(-np.pi / 4., 1)
-rccx_ctc.cx(0, 1)
-rccx_ctc.ry(-np.pi / 4., 1)
-rccx_ctc.cx(2, 1)
-rccx_ctc.ry(np.pi / 4., 1)
-rccx_ctc.cx(0, 1)
-rccx_ctc.ry(np.pi / 4., 1)
-rccx_ctc_gate = rccx_ctc.to_gate()
-rccx_ctc_inv_gate = rccx_ctc.inverse().to_gate()
+    def inverse(self, annotated: bool = False):
+        return RCCXGate()
 
-rccx_cct = QuantumCircuit(3, name='rccx_cct')
-rccx_cct.ry(-np.pi / 4., 2)
-rccx_cct.cx(2, 1)
-rccx_cct.cx(1, 2)
-rccx_cct.ry(-np.pi / 4., 1)
-rccx_cct.cx(0, 1)
-rccx_cct.ry(np.pi / 4., 1)
-rccx_cct.cx(1, 2)
-rccx_cct.cx(2, 1)
-rccx_cct.ry(np.pi / 4., 2)
-rccx_cct_gate = rccx_cct.to_gate()
-rccx_cct_inv_gate = rccx_cct.inverse().to_gate()
+    def __eq__(self, other):
+        return isinstance(other, RCCXGate)
 
-cq_unit = Parameter('cq_unit')
-if BOSON_NLEVEL == 2:
-    cq_coeffs = np.zeros((2, 2, 2))
-    cq_coeffs[0, 1, 1] = 1.
-    cq_coeffs[1, 0, 1] = 2.
-    cq = parity_network(diag_to_iz(cq_coeffs) * cq_unit, name='cq')
-elif BOSON_NLEVEL == 3:
-    cq = QuantumCircuit(2, name='cq')
-    cq.append(X12Gate(), [1])
-    cq.append(QubitQutritCRxPlusPiGate(), [0, 1])
-    cq.append(X12Gate(), [1])
-    cq.append(QGate(0.5 * cq_unit), [1])
-    cq.append(X12Gate(), [1])
-    cq.append(QubitQutritCRxMinusPiGate(), [0, 1])
-    cq.append(X12Gate(), [1])
-    cq.append(QGate(-0.5 * cq_unit), [1])
+    def __array__(self, dtype=None, copy=None):
+        if copy is False:
+            raise ValueError("unable to avoid copy while creating an array as requested")
+        arr = np.eye(8, dtype=dtype or complex)
+        arr[1, 1] = -1.
+        arr[3, 3] = 0.
+        arr[[3, 7], [7, 3]] = 1.
+        return arr
 
-    clambdaminus = QuantumCircuit(2, name=r'c$\lambda^{-}$')
-    clambdaminus.append(QubitQutritCRxMinusPiGate(), [0, 1])
-    clambdaminus.append(XminusGate(), [1])
-    clambdaminus.append(QubitQutritCRxMinusPiGate(), [0, 1])
-    clambdaminus.append(XplusGate(), [1])
-    clambdaminus.rz(-0.5 * np.pi, 0)
-    clambdaminus_gate = clambdaminus.to_gate()
 
-    cclambdaminus = QuantumCircuit(4, name=r'cc$\lambda^{-}$')
-    cclambdaminus.append(rccx_cct_gate, [0, 1, 2])
-    cclambdaminus.append(clambdaminus_gate, [2, 3])
-    cclambdaminus.append(rccx_cct_inv_gate, [0, 1, 2])
+if USE_QUTRIT:
+    class CQGate(QubitQutritCompositeGate):
+        """Controled Q gate."""
+        gate_name = 'cq'
 
-    clambdaminusc = QuantumCircuit(4, name=r'c$\lambda^{-}$c')
-    clambdaminusc.append(rccx_ctc_gate, [0, 1, 2])
-    clambdaminusc.append(clambdaminus_gate, [1, 3])
-    clambdaminusc.append(rccx_ctc_inv_gate, [0, 1, 2])
+        def __init__(
+            self,
+            phi: ParameterValueType,
+            label: Optional[str] = None
+        ):
+            super().__init__([phi], label=label)
 
-cclambdaminus_gate = cclambdaminus.to_gate()
-clambdaminusc_gate = clambdaminusc.to_gate()
+        def _define(self):
+            phi = self.params[0]
+            qr = QuantumRegister(2, 'q')
+            qc = QuantumCircuit(qr, name=self.name)
+            qc.append(X12Gate(), [1])
+            qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
+            qc.append(X12Gate(), [1])
+            qc.append(QGate(0.5 * phi), [1])
+            qc.append(X12Gate(), [1])
+            qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
+            qc.append(X12Gate(), [1])
+            qc.append(QGate(-0.5 * phi), [1])
+            self.definition = qc
 
-hopping_shape = (2, 2, BT, 2, 2, BT)  # i(r), o(r), l(r), i(r+1), o(r+1), l(r+1)
-diag_fn = np.sqrt((np.arange(BT)[:, None, None] + np.arange(1, 3)[None, :, None])
-                  / (np.arange(BT)[:, None, None] + np.arange(1, 3)[None, None, :]))
+        def inverse(self, annotated: bool = False):
+            return CQGate(-self.params[0])
 
-hi1_mat = op_matrix(np.diagflat(diag_fn), hopping_shape, (3, 4, 1))
-hi1_mat = op_matrix(cincr, hopping_shape, (1, 0)) @ hi1_mat
-hi1_mat = op_matrix(ocincr, hopping_shape, (4, 3)) @ hi1_mat
-hi1_mat = op_matrix(sigmaminus, hopping_shape, 2) @ hi1_mat
-hi1_mat = op_matrix(pauliz, hopping_shape, 4) @ hi1_mat
-hi1_mat = op_matrix(sigmaplus, hopping_shape, 5) @ hi1_mat
-hi1_mat += hi1_mat.conjugate().T
+        def __eq__(self, other):
+            return isinstance(other, CQGate) and self._compare_parameters(other)
 
-hi2_mat = op_matrix(np.diagflat(diag_fn), hopping_shape, (0, 2, 5))
-hi2_mat = op_matrix(cincr, hopping_shape, (5, 3)) @ hi2_mat
-hi2_mat = op_matrix(ocincr, hopping_shape, (2, 0)) @ hi2_mat
-hi2_mat = op_matrix(sigmaminus, hopping_shape, 4) @ hi2_mat
-hi2_mat = op_matrix(pauliz, hopping_shape, 2) @ hi2_mat
-hi2_mat = op_matrix(sigmaplus, hopping_shape, 1) @ hi2_mat
-hi2_mat += hi2_mat.conjugate().T
+        def __array__(self, dtype=None, copy=None):
+            if copy is False:
+                raise ValueError("unable to avoid copy while creating an array as requested")
+            phi = self.params[0]
+            return np.diagflat(
+                    [1., 1., 1., np.exp(-1.j * phi), 1., np.exp(-2.j * phi)]
+                ).astype(dtype or complex)
+
+    class CXminusGate(QubitQutritCompositeGate):
+        """Controlled X- gate."""
+        gate_name = 'cxminus'
+
+        def __init__(
+            self,
+            label: Optional[str] = None
+        ):
+            super().__init__([], label=label)
+
+        def _define(self):
+            qr = QuantumRegister(2, 'q')
+            qc = QuantumCircuit(qr, name=self.name)
+            qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
+            qc.append(XminusGate(), [1])
+            qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
+            qc.append(XplusGate(), [1])
+            qc.rz(-0.5 * np.pi, 0)
+            self.definition = qc
+
+        def inverse(self, annotated: bool = False):
+            return CXplusGate()
+
+        def __eq__(self, other):
+            return isinstance(other, CXminusGate)
+
+        def __array__(self, dtype=None, copy=None):
+            if copy is False:
+                raise ValueError("unable to avoid copy while creating an array as requested")
+            arr = np.diagflat([1., 1., 1., 0., 0., 0.]).astype(dtype or complex)
+            arr[[1, 3], [3, 5]] = 1.
+            arr[5, 1] = 1.j
+            return arr
+
+    class CXplusGate(QubitQutritCompositeGate):
+        """Controlled X+ gate."""
+        gate_name = 'cxplus'
+
+        def __init__(
+            self,
+            label: Optional[str] = None
+        ):
+            super().__init__([], label=label)
+
+        def _define(self):
+            qr = QuantumRegister(2, 'q')
+            qc = QuantumCircuit(qr, name=self.name)
+            qc.rz(0.5 * np.pi, 0)
+            qc.append(XminusGate(), [1])
+            qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
+            qc.append(XplusGate(), [1])
+            qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
+            self.definition = qc
+
+        def inverse(self, annotated: bool = False):
+            return CXminusGate()
+
+        def __eq__(self, other):
+            return isinstance(other, CXplusGate)
+
+        def __array__(self, dtype=None, copy=None):
+            if copy is False:
+                raise ValueError("unable to avoid copy while creating an array as requested")
+            arr = np.diagflat([1., 1., 1., 0., 0., 0.]).astype(dtype or complex)
+            arr[[3, 5], [1, 3]] = 1.
+            arr[1, 5] = -1.j
+            return arr
+
+    class CCXminusGate(Gate):
+        """Doubly controlled Xminus gate using an ancilla qubit."""
+        def __init__(self):
+            super().__init__('ccxminus', 4, [])
+
+        def _define(self):
+            qr = QuantumRegister(4)
+            qc = QuantumCircuit(qr, name=self.name)
+            qc.append(RCCXGate(), [0, 1, 2])
+            qc.append(CXminusGate(), [2, 3])
+            qc.append(RCCXGate(), [0, 1, 2])
+            self.definition = qc
+
+        def inverse(self, annotated: bool = False):
+            return CCXplusGate()
+
+        def __eq__(self, other):
+            return isinstance(other, CCXminusGate)
+
+    class CCXplusGate(Gate):
+        """Doubly controlled Xminus gate using an ancilla qubit."""
+        def __init__(self):
+            super().__init__('ccxplus', 4, [])
+
+        def _define(self):
+            qr = QuantumRegister(4)
+            qc = QuantumCircuit(qr, name=self.name)
+            qc.append(RCCXGate(), [0, 1, 2])
+            qc.append(CXplusGate(), [2, 3])
+            qc.append(RCCXGate(), [0, 1, 2])
+            self.definition = qc
+
+        def inverse(self, annotated: bool = False):
+            return CCXminusGate()
+
+        def __eq__(self, other):
+            return isinstance(other, CCXplusGate)
 
 HoppingTermConfig = namedtuple('HoppingTermConfig',
                                ['qubit_labels', 'boson_ops', 'default_qp', 'gl_states', 'indices'])
@@ -163,7 +238,14 @@ def electric_12_term(
         circuit.p(-0.75 * time_step, qp['l'])
         return circuit, qp, qp
 
-    if BOSON_NLEVEL == 2:
+    if USE_QUTRIT:
+        if qp is None:
+            qp = QubitPlacement([('d', site)])
+        circuit = QuantumCircuit(1)
+        # H_E^(1) + H_E^(2)
+        circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
+        circuit.append(P2Gate(-2. * time_step), [qp['d']])
+    else:
         if qp is None:
             qp = QubitPlacement([('d0', site), ('d1', site)])
         circuit = QuantumCircuit(2)
@@ -177,13 +259,6 @@ def electric_12_term(
         circuit.cx(qp['d0'], qp['d1'])
         circuit.rz(coeffs[1, 1] * time_step, qp['d1'])
         circuit.cx(qp['d0'], qp['d1'])
-    elif BOSON_NLEVEL == 3:
-        if qp is None:
-            qp = QubitPlacement([('d', site)])
-        circuit = QuantumCircuit(1)
-        # H_E^(1) + H_E^(2)
-        circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
-        circuit.append(P2Gate(-2. * time_step), [qp['d']])
 
     return circuit, qp, qp
 
@@ -249,32 +324,30 @@ def electric_3b_term(
                 labels = ['l', 'o', 'i']
             else:
                 labels = ['i', 'l', 'o']
-            if BOSON_NLEVEL == 2:
+            if USE_QUTRIT:
+                labels.insert(labels.index('o'), 'd')
+            else:
                 labels.insert(labels.index('o'), 'd1')
                 labels.insert(labels.index('o'), 'd0')
-            elif BOSON_NLEVEL == 3:
-                labels.insert(labels.index('o'), 'd')
+
             qp = QubitPlacement([(lab, site) for lab in labels])
 
         circuit = QuantumCircuit(qp.num_qubits)
 
         # 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
-        if qp['i', site] < qp['l', site]:
-            circuit.append(rccx_ctc_gate, [qp['i', site], qp['l', site], qp['o', site]])
+        circuit.append(RCCXGate(), [qp['i', site], qp['o', site], qp['l', site]])
+        if USE_QUTRIT:
+            circuit.append(CQGate(0.5 * time_step), [qp['l', site], qp['d', site]])
         else:
-            circuit.append(rccx_cct_gate, [qp['i', site], qp['o', site], qp['l', site]])
-        if BOSON_NLEVEL == 2:
-            circuit.append(cq.to_gate({cq_unit: 0.5 * time_step}),
-                           [qp['l', site], qp['d0', site], qp['d1', site]])
-        elif BOSON_NLEVEL == 3:
-            circuit.append(cq.to_gate({cq_unit: 0.5 * time_step}),
-                           [qp['l', site], qp['d', site]])
+            cq_coeffs = np.zeros((2, 2, 2))
+            cq_coeffs[0, 1, 1] = 1.
+            cq_coeffs[1, 0, 1] = 2.
+            circuit.compose(parity_network(diag_to_iz(cq_coeffs) * 0.5 * time_step),
+                            qubits=[qp['l', site], qp['d0', site], qp['d1', site]], inplace=True)
+
         circuit.rz(-0.5 * time_step, qp['l', site])
-        if qp['i', site] < qp['l', site]:
-            circuit.append(rccx_ctc_inv_gate, [qp['i', site], qp['l', site], qp['o', site]])
-        else:
-            circuit.append(rccx_cct_inv_gate, [qp['i', site], qp['o', site], qp['l', site]])
+        circuit.append(RCCXGate(), [qp['i', site], qp['o', site], qp['l', site]])
         circuit.x(qp['i'])
 
     return circuit, qp, qp
@@ -360,7 +433,8 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
         else:
             ops = {pboson: ('lambda', 'Lambda')}
 
-        mask = ~((cyp & cf & (occnum(pboson) == 0)) | (~cyp & cf & (occnum(pboson) == BT - 1)))
+        mask = ~((cyp & cf & (occnum(pboson) == 0))
+                 | (~cyp & cf & (occnum(pboson) == BOSON_TRUNC - 1)))
         if np.all(mask):
             ops[pboson] = (ops[pboson][0], 'id')
         else:
@@ -379,7 +453,8 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
         else:
             ops[tboson] = ('lambda', 'Lambda')
 
-        mask = ~((cyp & cf & (occnum(tboson) == 0)) | (~cyp & cf & (occnum(tboson) == BT - 1)))
+        mask = ~((cyp & cf & (occnum(tboson) == 0))
+                 | (~cyp & cf & (occnum(tboson) == BOSON_TRUNC - 1)))
         if np.all(mask):
             ops[tboson] = (ops[tboson][0], 'id')
 
@@ -492,10 +567,14 @@ def hopping_usvd(
         if config.boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
         elif config.boson_ops['p'][0] == 'lambda':
+            # While the gate is conceptually symmetric with respect to the two controls, transpiler
+            # InverseCancellation pass cannot handle CCXplus-CCXminus with different ordering.
+            # We therefore need to manually specify the control qubit order here
             if term_type == 1:
-                circuit.append(cclambdaminus_gate, [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")])
+                qargs = [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")]
             else:
-                circuit.append(cclambdaminus_gate, [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")])
+                qargs = [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")]
+            circuit.append(CCXminusGate(), qargs)
         circuit.x(qpl("x"))
 
         # Bring y' next to x' and do CX
@@ -511,7 +590,7 @@ def hopping_usvd(
         if config.boson_ops['q'][0] == 'X':
             circuit.ccx(qpl("x'"), qpl("y"), qpl("q"))
         elif config.boson_ops['q'][0] == 'lambda':
-            circuit.append(clambdaminusc_gate, [qpl("x'"), qpl("q"), qpl("y"), qpl("qd")])
+            circuit.append(CCXminusGate(), [qpl("x'"), qpl("y"), qpl("q"), qpl("qd")])
 
         circuit.x(qpl("x'"))
         circuit.h(qpl("x'"))
@@ -524,9 +603,9 @@ def hopping_usvd(
             circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
         elif config.boson_ops['q'][0] == 'lambda':
             if term_type == 1:
-                circuit.append(cclambdaminus_gate, [qpl("y"), qpl("y'"), qpl("q"), qpl("qd")])
+                circuit.append(CCXminusGate(), [qpl("y"), qpl("y'"), qpl("q"), qpl("qd")])
             else:
-                circuit.append(cclambdaminus_gate, [qpl("y'"), qpl("y"), qpl("q"), qpl("qd")])
+                circuit.append(CCXminusGate(), [qpl("y'"), qpl("y"), qpl("q"), qpl("qd")])
 
         if term_type == 1:
             qp = swap("y'", "q")
@@ -541,7 +620,7 @@ def hopping_usvd(
         if config.boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         elif config.boson_ops['q'][0] == 'lambda':
-            circuit.append(clambdaminusc_gate, [qpl("y'"), qpl("p"), qpl("x"), qpl("pd")])
+            circuit.append(CCXminusGate(), [qpl("y'"), qpl("x"), qpl("p"), qpl("pd")])
         circuit.x(qpl("x"))
 
         circuit.h(qpl("y'"))
@@ -580,7 +659,7 @@ def hopping_diagonal_op(
     idx = config.indices["q"]
     if config.boson_ops['q'][0] == 'lambda':
         states[mask, idx] -= 1
-        states[mask, idx] %= BT
+        states[mask, idx] %= BOSON_TRUNC
     elif config.boson_ops['q'][0] == 'X':
         states[mask, idx] *= -1
         states[mask, idx] += 1
@@ -588,13 +667,15 @@ def hopping_diagonal_op(
     idx = config.indices["p"]
     if config.boson_ops['p'][0] == 'lambda':
         states[mask, idx] -= 1
-        states[mask, idx] %= BT
+        states[mask, idx] %= BOSON_TRUNC
     elif config.boson_ops['p'][0] == 'X':
         states[mask, idx] *= -1
         states[mask, idx] += 1
 
     # Apply the projectors and construct the diagonal operator
     # Start with the diagonal function
+    diag_fn = np.sqrt((np.arange(BOSON_TRUNC)[:, None, None] + np.arange(1, 3)[None, :, None])
+                      / (np.arange(BOSON_TRUNC)[:, None, None] + np.arange(1, 3)[None, None, :]))
     diag_op = np.tile(diag_fn[..., None, None], (1, 1, 1, 2, 2))
     if config.boson_ops['p'][1] == 'id':
         # Diag op is expressed in terms of n_q
@@ -629,7 +710,7 @@ def hopping_diagonal_op(
             continue
         mask = states[:, config.indices[fermion]] == cval
         if projector == 'Lambda':
-            mask &= states[:, config.indices[boson]] == BT - 1
+            mask &= states[:, config.indices[boson]] == BOSON_TRUNC - 1
         else:
             mask &= states[:, config.indices[boson]] != 0
         states = states[~mask]
