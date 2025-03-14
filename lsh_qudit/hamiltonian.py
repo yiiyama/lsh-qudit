@@ -68,11 +68,12 @@ if USE_QUTRIT:
             qc.append(X12Gate(), [1])
             qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
             qc.append(X12Gate(), [1])
-            qc.append(QGate(0.5 * phi), [1])
+            qc.append(QGate(-0.5 * phi), [1])
             qc.append(X12Gate(), [1])
             qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
             qc.append(X12Gate(), [1])
-            qc.append(QGate(-0.5 * phi), [1])
+            qc.append(QGate(0.5 * phi), [1])
+            qc.rz(phi, 0)
             self.definition = qc
 
         def inverse(self, annotated: bool = False):
@@ -86,7 +87,7 @@ if USE_QUTRIT:
                 raise ValueError("unable to avoid copy while creating an array as requested")
             phi = self.params[0]
             return np.diagflat(
-                    [1., 1., 1., np.exp(-1.j * phi), 1., np.exp(-2.j * phi)]
+                    [1., 1., 1., np.exp(1.j * phi), 1., np.exp(2.j * phi)]
                 ).astype(dtype or complex)
 
     class CXminusGate(QubitQutritCompositeGate):
@@ -250,15 +251,15 @@ def electric_12_term(
             qp = QubitPlacement([('d0', site), ('d1', site)])
         circuit = QuantumCircuit(2)
         # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
-        coeffs = np.zeros((2, 2))
-        coeffs[0, 1] = 0.75
-        coeffs[1, 0] = 2.
-        coeffs = diag_to_iz(coeffs)
-        circuit.rz(coeffs[0, 1] * time_step, qp['d0'])
-        circuit.rz(coeffs[1, 0] * time_step, qp['d1'])
-        circuit.cx(qp['d0'], qp['d1'])
-        circuit.rz(coeffs[1, 1] * time_step, qp['d1'])
-        circuit.cx(qp['d0'], qp['d1'])
+        # coeffs = np.zeros((2, 2))
+        # coeffs[0, 1] = 0.75
+        # coeffs[1, 0] = 2.
+        # circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
+        #                 qubits=[qp['d0', site], qp['d1', site]], inplace=True)
+        # Optimization specific for BOSON_TRUNC=3: there should never be a state (1, 1), so we can
+        # just make this a sum of local Zs
+        circuit.p(-0.75 * time_step, qp['d0'])
+        circuit.p(-2. * time_step, qp['d1'])
 
     return circuit, qp, qp
 
@@ -338,15 +339,17 @@ def electric_3b_term(
         circuit.x(qp['i'])
         circuit.append(RCCXGate(), [qp['i', site], qp['o', site], qp['l', site]])
         if USE_QUTRIT:
-            circuit.append(CQGate(0.5 * time_step), [qp['l', site], qp['d', site]])
+            circuit.append(CQGate(-0.5 * time_step), [qp['l', site], qp['d', site]])
         else:
-            cq_coeffs = np.zeros((2, 2, 2))
-            cq_coeffs[0, 1, 1] = 1.
-            cq_coeffs[1, 0, 1] = 2.
-            circuit.compose(parity_network(diag_to_iz(cq_coeffs) * 0.5 * time_step),
-                            qubits=[qp['l', site], qp['d0', site], qp['d1', site]], inplace=True)
+            # coeffs = np.zeros((2, 2, 2))
+            # coeffs[0, 1, 1] = 0.5
+            # coeffs[1, 0, 1] = 1.
+            # circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
+            #                 qubits=[qp['l', site], qp['d0', site], qp['d1', site]], inplace=True)
+            # Optimization specific for BOSON_TRUNC=3
+            circuit.cp(-0.5 * time_step, qp['l', site], qp['d0', site])
+            circuit.cp(-time_step, qp['l', site], qp['d1', site])
 
-        circuit.rz(-0.5 * time_step, qp['l', site])
         circuit.append(RCCXGate(), [qp['i', site], qp['o', site], qp['l', site]])
         circuit.x(qp['i'])
 
@@ -567,14 +570,19 @@ def hopping_usvd(
         if config.boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
         elif config.boson_ops['p'][0] == 'lambda':
-            # While the gate is conceptually symmetric with respect to the two controls, transpiler
-            # InverseCancellation pass cannot handle CCXplus-CCXminus with different ordering.
-            # We therefore need to manually specify the control qubit order here
-            if term_type == 1:
-                qargs = [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")]
+            if USE_QUTRIT:
+                # While the gate is conceptually symmetric with respect to the two controls, transpiler
+                # InverseCancellation pass cannot handle CCXplus-CCXminus with different ordering.
+                # We therefore need to manually specify the control qubit order here
+                if term_type == 1:
+                    qargs = [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")]
+                else:
+                    qargs = [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")]
+                circuit.append(CCXminusGate(), qargs)
             else:
-                qargs = [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")]
-            circuit.append(CCXminusGate(), qargs)
+                # TODO HERE
+                pass
+
         circuit.x(qpl("x"))
 
         # Bring y' next to x' and do CX
