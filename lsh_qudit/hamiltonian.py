@@ -390,10 +390,17 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             "y'": ('i', site + 1),
             "y": ('o', site + 1),
             "p": ('l', site),
-            "q": ('l', site + 1),
-            "pd": ('d', site),
-            "qd": ('d', site + 1)
+            "q": ('l', site + 1)
         }
+        if USE_QUTRIT:
+            qubit_labels |= {
+                "pd": ('d', site),
+                "qd": ('d', site + 1)
+            }
+        else:
+            qubit_labels |= {f"pd{i}": (f'd{i}', site) for i in range(2)}
+            qubit_labels |= {f"qd{i}": (f'd{i}', site + 1) for i in range(2)}
+
         indices = {"x'": 0, "x": 1, "y'": 3, "y": 4, "p": 2, "q": 5}
     else:
         qubit_labels = {
@@ -402,10 +409,17 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             "y'": ('o', site),
             "y": ('i', site),
             "p": ('l', site + 1),
-            "q": ('l', site),
-            "pd": ('d', site + 1),
-            "qd": ('d', site)
+            "q": ('l', site)
         }
+        if USE_QUTRIT:
+            qubit_labels |= {
+                "pd": ('d', site + 1),
+                "qd": ('d', site)
+            }
+        else:
+            qubit_labels |= {f"pd{i}": (f'd{i}', site + 1) for i in range(2)}
+            qubit_labels |= {f"qd{i}": (f'd{i}', site) for i in range(2)}
+
         indices = {"x'": 4, "x": 3, "y'": 1, "y": 0, "p": 5, "q": 2}
 
     gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, num_sites=2,
@@ -571,16 +585,20 @@ def hopping_usvd(
             circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
         elif config.boson_ops['p'][0] == 'lambda':
             if USE_QUTRIT:
-                # While the gate is conceptually symmetric with respect to the two controls, transpiler
-                # InverseCancellation pass cannot handle CCXplus-CCXminus with different ordering.
-                # We therefore need to manually specify the control qubit order here
+                # While the gate is conceptually symmetric with respect to the two controls,
+                # transpiler InverseCancellation pass cannot handle CCXplus-CCXminus with
+                # different ordering. We therefore need to manually specify the control qubit order
+                # here.
                 if term_type == 1:
                     qargs = [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")]
                 else:
                     qargs = [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")]
                 circuit.append(CCXminusGate(), qargs)
             else:
-                # TODO HERE
+                circuit.h(qpl("pd1"))
+                circuit.cp(-np.pi / 2., qpl("pd0"), qpl("pd1"))
+                circuit.h(qpl("pd0"))
+                # TODO HERE and also move d qubits to the end
                 pass
 
         circuit.x(qpl("x"))
