@@ -43,13 +43,35 @@ def sort_qubits(circuit, initial_placement):
     qregs = []
     mapping = [None] * initial_placement.num_qubits
     for isite in sorted(sites):
-        for name in ['i', 'o', 'l', 'd']:
+        for name in ['i', 'o', 'l']:
             try:
                 i_in = next(i for i, l in enumerate(initial_placement.qubit_labels)
                             if l == (name, isite))
             except StopIteration:
                 continue
 
+            mapping[i_in] = len(qregs)
+            qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
+
+    for isite in sorted(sites):
+        try:
+            name = 'd'
+            i_in = next(i for i, l in enumerate(initial_placement.qubit_labels)
+                        if l == (name, isite))
+        except StopIteration:
+            iq = 0
+            while True:
+                name = f'd{iq}'
+                try:
+                    i_in = next(i for i, l in enumerate(initial_placement.qubit_labels)
+                                if l == (name, isite))
+                except StopIteration:
+                    break
+                else:
+                    mapping[i_in] = len(qregs)
+                    qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
+                    iq += 1
+        else:
             mapping[i_in] = len(qregs)
             qregs.append(QuantumRegister(1, name=f'{name}({isite})'))
 
