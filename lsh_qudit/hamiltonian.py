@@ -12,7 +12,7 @@ from .parity_network import parity_network
 
 
 BOSON_TRUNC = 3
-USE_QUTRIT = True
+BOSONIC_QUBITS = 'qutrit'
 
 
 class RCCXGate(Gate):
@@ -49,7 +49,7 @@ class RCCXGate(Gate):
         return arr
 
 
-if USE_QUTRIT:
+if BOSONIC_QUBITS == 'qutrit':
     class CQGate(QubitQutritCompositeGate):
         """Controled Q gate."""
         gate_name = 'cq'
@@ -239,7 +239,7 @@ def electric_12_term(
         circuit.p(-0.75 * time_step, qp['l'])
         return circuit, qp, qp
 
-    if USE_QUTRIT:
+    if BOSONIC_QUBITS == 'qutrit':
         if qp is None:
             qp = QubitPlacement([('d', site)])
         circuit = QuantumCircuit(1)
@@ -248,18 +248,21 @@ def electric_12_term(
         circuit.append(P2Gate(-2. * time_step), [qp['d']])
     else:
         if qp is None:
-            qp = QubitPlacement([('d0', site), ('d1', site)])
-        circuit = QuantumCircuit(2)
+            qp = QubitPlacement([(f'd{i}', site) for i in range(BOSONIC_QUBITS)])
+        circuit = QuantumCircuit(BOSONIC_QUBITS)
         # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
-        # coeffs = np.zeros((2, 2))
-        # coeffs[0, 1] = 0.75
-        # coeffs[1, 0] = 2.
-        # circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
-        #                 qubits=[qp['d0', site], qp['d1', site]], inplace=True)
-        # Optimization specific for BOSON_TRUNC=3: there should never be a state (1, 1), so we can
-        # just make this a sum of local Zs
-        circuit.p(-0.75 * time_step, qp['d0'])
-        circuit.p(-2. * time_step, qp['d1'])
+        if BOSON_TRUNC == 3 and BOSONIC_QUBITS == 2:
+            # Optimization specific for BOSON_TRUNC=3: there should never be a state (1, 1), so we
+            # can just make this a sum of local Zs
+            circuit.p(-0.75 * time_step, qp['d0'])
+            circuit.p(-2. * time_step, qp['d1'])
+        else:
+            coeffs = np.zeros(2 ** BOSONIC_QUBITS)
+            nl = np.arange(BOSON_TRUNC)
+            coeffs[:BOSON_TRUNC] = 0.5 * nl + 0.25 * np.square(nl)
+            coeffs = coeffs.reshape((2,) * BOSONIC_QUBITS)
+            circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
+                            qubits=[qp[f'd{i}', site] for i in range(BOSONIC_QUBITS)], inplace=True)
 
     return circuit, qp, qp
 
@@ -325,12 +328,10 @@ def electric_3b_term(
                 labels = ['l', 'o', 'i']
             else:
                 labels = ['i', 'l', 'o']
-            if USE_QUTRIT:
-                labels.insert(labels.index('o'), 'd')
+            if BOSONIC_QUBITS == 'qutrit':
+                labels.append('d')
             else:
-                labels.insert(labels.index('o'), 'd1')
-                labels.insert(labels.index('o'), 'd0')
-
+                labels.extend(['d1', 'd0'])
             qp = QubitPlacement([(lab, site) for lab in labels])
 
         circuit = QuantumCircuit(qp.num_qubits)
@@ -338,7 +339,7 @@ def electric_3b_term(
         # 1/2 n_l n_o (1 - n_i)
         circuit.x(qp['i'])
         circuit.append(RCCXGate(), [qp['i', site], qp['o', site], qp['l', site]])
-        if USE_QUTRIT:
+        if BOSONIC_QUBITS == 'qutrit':
             circuit.append(CQGate(-0.5 * time_step), [qp['l', site], qp['d', site]])
         else:
             # coeffs = np.zeros((2, 2, 2))
@@ -392,14 +393,14 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             "p": ('l', site),
             "q": ('l', site + 1)
         }
-        if USE_QUTRIT:
+        if BOSONIC_QUBITS == 'qutrit':
             qubit_labels |= {
                 "pd": ('d', site),
                 "qd": ('d', site + 1)
             }
         else:
-            qubit_labels |= {f"pd{i}": (f'd{i}', site) for i in range(2)}
-            qubit_labels |= {f"qd{i}": (f'd{i}', site + 1) for i in range(2)}
+            qubit_labels |= {f"pd{i}": (f'd{i}', site) for i in range(BOSONIC_QUBITS)}
+            qubit_labels |= {f"qd{i}": (f'd{i}', site + 1) for i in range(BOSONIC_QUBITS)}
 
         indices = {"x'": 0, "x": 1, "y'": 3, "y": 4, "p": 2, "q": 5}
     else:
@@ -411,14 +412,14 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
             "p": ('l', site + 1),
             "q": ('l', site)
         }
-        if USE_QUTRIT:
+        if BOSONIC_QUBITS == 'qutrit':
             qubit_labels |= {
                 "pd": ('d', site + 1),
                 "qd": ('d', site)
             }
         else:
-            qubit_labels |= {f"pd{i}": (f'd{i}', site + 1) for i in range(2)}
-            qubit_labels |= {f"qd{i}": (f'd{i}', site) for i in range(2)}
+            qubit_labels |= {f"pd{i}": (f'd{i}', site + 1) for i in range(BOSONIC_QUBITS)}
+            qubit_labels |= {f"qd{i}": (f'd{i}', site) for i in range(BOSONIC_QUBITS)}
 
         indices = {"x'": 4, "x": 3, "y'": 1, "y": 0, "p": 5, "q": 2}
 
@@ -502,13 +503,13 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
 
     match (term_type, site % 2):
         case (1, 0):
-            labels = ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
+            labels = ["p", "x", "x'", "y'", "q", "y", "pd", "qd"]
         case (1, 1):
-            labels = ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
+            labels = ["x", "p", "x'", "q", "y'", "y", "pd", "qd"]
         case (2, 0):
-            labels = ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+            labels = ["q", "y", "y'", "x'", "p", "x", "pd", "qd"]
         case (2, 1):
-            labels = ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
+            labels = ["y", "q", "y'", "p", "x'", "x", "pd", "qd"]
     if boson_ops['p'][0] == 'id':
         labels.remove("p")
     if boson_ops['p'][0] != 'lambda':
@@ -577,30 +578,15 @@ def hopping_usvd(
     if (term_type, site % 2) in [(1, 0), (2, 1)]:
         # x' as the SVD key qubit
         # Default QP
-        # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
-        # (2, 1): ["y", "q", "qd", "y'", "p", "pd", "x'", "x"]
+        # (1, 0): ["p", "x", "x'", "y'", "q", "y"]
+        # (2, 1): ["y", "q", "y'", "p", "x'", "x"]
         circuit.x(qpl("x'"))
+
         circuit.x(qpl("x"))
         if config.boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("x'"), qpl("x"), qpl("p"))
         elif config.boson_ops['p'][0] == 'lambda':
-            if USE_QUTRIT:
-                # While the gate is conceptually symmetric with respect to the two controls,
-                # transpiler InverseCancellation pass cannot handle CCXplus-CCXminus with
-                # different ordering. We therefore need to manually specify the control qubit order
-                # here.
-                if term_type == 1:
-                    qargs = [qpl("x'"), qpl("x"), qpl("p"), qpl("pd")]
-                else:
-                    qargs = [qpl("x"), qpl("x'"), qpl("p"), qpl("pd")]
-                circuit.append(CCXminusGate(), qargs)
-            else:
-                circuit.h(qpl("pd1"))
-                circuit.cp(-np.pi / 2., qpl("pd0"), qpl("pd1"))
-                circuit.h(qpl("pd0"))
-                # TODO HERE and also move d qubits to the end
-                pass
-
+            _hopping_usvd_decrementer(circuit, qpl, ["x'", "x"], "p")
         circuit.x(qpl("x"))
 
         # Bring y' next to x' and do CX
@@ -609,49 +595,71 @@ def hopping_usvd(
         circuit.cx(qpl("x'"), qpl("y'"))
 
         # Current QP
-        # (1, 0): ["p", "pd", "x", "x'", "y'", "q", "qd", "y"]
-        # (2, 1): ["y", "q", "qd", "y'", "x'", "pd", "p", "x"]
+        # (1, 0): ["p", "x", "x'", "y'", "q", "y"]
+        # (2, 1): ["y", "q", "y'", "x'", "p", "x"]
         # Need x' y q contiguous
         qp = swap("y'", "x'")
         if config.boson_ops['q'][0] == 'X':
             circuit.ccx(qpl("x'"), qpl("y"), qpl("q"))
         elif config.boson_ops['q'][0] == 'lambda':
-            circuit.append(CCXminusGate(), [qpl("x'"), qpl("y"), qpl("q"), qpl("qd")])
+            _hopping_usvd_decrementer(circuit, qpl, ["x'", "y"], "q")
 
         circuit.x(qpl("x'"))
         circuit.h(qpl("x'"))
     else:
         # y' as the SVD key qubit
         # Default QP
-        # (1, 1): ["x", "p", "pd", "x'", "q", "qd", "y'", "y"]
-        # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+        # (1, 1): ["x", "p", "x'", "q", "y'", "y"]
+        # (2, 0): ["q", "y", "y'", "x'", "p", "x"]
         if config.boson_ops['q'][0] == 'X':
             circuit.ccx(qpl("y'"), qpl("y"), qpl("q"))
         elif config.boson_ops['q'][0] == 'lambda':
-            if term_type == 1:
-                circuit.append(CCXminusGate(), [qpl("y"), qpl("y'"), qpl("q"), qpl("qd")])
-            else:
-                circuit.append(CCXminusGate(), [qpl("y'"), qpl("y"), qpl("q"), qpl("qd")])
+            _hopping_usvd_decrementer(circuit, qpl, ["y'", "y"], "q")
 
         if term_type == 1:
             qp = swap("y'", "q")
         circuit.cx(qpl("y'"), qpl("x'"))
 
         # Current QP
-        # (1, 1): ["x", "p", "pd", "x'", "y'", "q", "qd", "y"]
-        # (2, 0): ["q", "qd", "y", "y'", "x'", "p", "pd", "x"]
+        # (1, 1): ["x", "p", "x'", "y'", "q", "y"]
+        # (2, 0): ["q", "y", "y'", "x'", "p", "x"]
         # Need y' x p contiguous
         qp = swap("y'", "x'")
         circuit.x(qpl("x"))
         if config.boson_ops['p'][0] == 'X':
             circuit.ccx(qpl("y'"), qpl("x"), qpl("p"))
         elif config.boson_ops['q'][0] == 'lambda':
-            circuit.append(CCXminusGate(), [qpl("y'"), qpl("x"), qpl("p"), qpl("pd")])
+            _hopping_usvd_decrementer(circuit, qpl, ["y'", "x"], "p")
         circuit.x(qpl("x"))
 
         circuit.h(qpl("y'"))
 
     return circuit, init_p, qp
+
+
+def _hopping_usvd_decrementer(circuit, qpl, fermions, boson):
+    # While the RCCX gate is conceptually symmetric with respect to the two controls,
+    # transpiler InverseCancellation pass cannot handle CCXplus-CCXminus with
+    # different ordering. We therefore need to manually specify the control qubit order
+    # here as (far control)-(near control)-(target).
+    qargs = sorted((qpl(f) for f in fermions), key=lambda q: -abs(qpl(boson) - q))
+    qargs.append(qpl(boson))
+
+    if BOSONIC_QUBITS == 'qutrit':
+        circuit.append(CCXminusGate(), qargs + [qpl(boson + "d")])
+    else:
+        circuit.append(RCCXGate(), qargs)
+        if BOSON_TRUNC == 2 ** BOSONIC_QUBITS - 1:
+            raise NotImplementedError('QFT-based decrementer')
+        elif BOSON_TRUNC == 3 and BOSONIC_QUBITS == 2:
+            circuit.cx(*[qpl(boson + suffix) for suffix in ['', 'd0']])
+            circuit.ccx(*[qpl(boson + suffix) for suffix in ['', 'd0', 'd1']])
+            circuit.ccx(*[qpl(boson + suffix) for suffix in ['', 'd1', 'd0']])
+        else:
+            raise NotImplementedError('No decrementer circuit for'
+                                      f' BOSON_TRUNC={BOSON_TRUNC} and'
+                                      f' BOSONIC_QUBITS={BOSONIC_QUBITS}')
+        circuit.append(RCCXGate(), qargs)
 
 
 def hopping_diagonal_op(
@@ -804,10 +812,10 @@ def hopping_diagonal_term(
     reverse_map = {value: key for key, value in config.qubit_labels.items()}
 
     # Final QP of Usvd
-    # (1, 0): ["p", "pd", "x", "y'", "x'", "q", "qd", "y"]
-    # (1, 1): ["x", "p", "pd", "y'", "x'", "q", "qd", "y"]
-    # (2, 0): ["q", "qd", "y", "x'", "y'", "p", "pd", "x"]
-    # (2, 1): ["y", "q", "qd", "x'", "y'", "p", "pd", "x"]
+    # (1, 0): ["p", "x", "y'", "x'", "q", "y"]
+    # (1, 1): ["x", "p", "y'", "x'", "q", "y"]
+    # (2, 0): ["q", "y", "x'", "y'", "p", "x"]
+    # (2, 1): ["y", "q", "x'", "y'", "p", "x"]
     match (term_type, site % 2, config.boson_ops["p"][1], config.boson_ops["q"][1]):
         case (1, 0, 'id', 'zero'):
             swaps = []
