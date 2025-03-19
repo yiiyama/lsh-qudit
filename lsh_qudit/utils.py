@@ -132,40 +132,6 @@ def op_matrix(op, shape, qubits):
     return mat
 
 
-def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False):
-    """Returns an array of AGL-satisfying states with optional boundary conditions.
-
-    When as_multi=True, a 2-dimensional array is returned with the inner dimension corresponding
-    to occupation numbers in the (i, o, l) order in the increasing site number.
-    """
-    shape = (2, 2, 3) * num_sites
-    states = np.array(np.unravel_index(np.arange(np.prod(shape)), shape)).T
-    agl_mask = np.ones(states.shape[:1], dtype=bool)
-    for iconn in range(num_sites - 1):
-        il = iconn * 3
-        agl_mask &= np.equal((1 - states[:, il + 0]) * states[:, il + 1] + states[:, il + 2],
-                             states[:, il + 3] * (1 - states[:, il + 4]) + states[:, il + 5])
-    states = states[agl_mask]
-    if isinstance(left_flux, int):
-        left_flux = (left_flux,)
-    if left_flux:
-        mask = np.zeros(states.shape[0], dtype=bool)
-        for val in left_flux:
-            mask |= np.equal(states[:, 0] * (1 - states[:, 1]) + states[:, 2], val)
-        states = states[mask]
-    if isinstance(right_flux, int):
-        right_flux = (right_flux,)
-    if right_flux:
-        mask = np.zeros(states.shape[0], dtype=bool)
-        for val in right_flux:
-            mask |= np.equal((1 - states[:, -3]) * states[:, -2] + states[:, -1], val)
-        states = states[mask]
-
-    if as_multi:
-        return states
-    return np.sum(states * np.cumprod((1,) + shape[-1:0:-1])[None, ::-1], axis=1)
-
-
 def clean_array(arr):
     return (np.where(np.isclose(arr.real, 0.), 0., arr.real)
             + 1.j * np.where(np.isclose(arr.imag, 0.), 0., arr.imag))
