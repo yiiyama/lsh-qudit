@@ -12,10 +12,12 @@ from .utils import clean_array
 def circuit_unitary(
     circuit: QuantumCircuit,
     qutrits=(),
+    boson_regs=None,
     ancillae=(),
     diagonal=False,
     clean=True
 ):
+    boson_regs = boson_regs or []
     num_qubits = circuit.num_qubits
     # Qubit to axis map
     qubit_map = {qubit: i for i, qubit in enumerate(circuit.qubits[::-1])}
@@ -53,6 +55,15 @@ def circuit_unitary(
         unitary = unitary[(0,) * num_anc_axes]
         full_shape = tuple(full_shape[iq] for iq in range(num_qubits - 1, -1, -1)
                            if iq not in ancillae)
+        num_qubits -= len(ancillae)
+
+    for reg in boson_regs:
+        axes = np.array([qubit_map[circuit.qubits[iq]] for iq in reg[::-1]])
+        nq = len(axes)
+        new_ax = min(axes)
+        unitary = np.moveaxis(unitary, axes, np.arange(new_ax, new_ax + nq))
+        new_ax += num_qubits
+        unitary = np.moveaxis(unitary, axes + num_qubits, np.arange(new_ax, new_ax + nq))
 
     full_dim = np.prod(full_shape)
     unitary = unitary.reshape(full_dim, full_dim)
@@ -68,22 +79,26 @@ def validate_circuit(
     circuit: QuantumCircuit,
     target: np.ndarray,
     subspace: Optional[tuple[Sequence[int]]] = None,
+    shape: Optional[tuple[int, ...]] = None,
     qutrits=(),
+    boson_regs=None,
     ancillae=(),
     exponentiate=True,
     diagonal=False,
     result_only=True
 ):
-    unitary = circuit_unitary(circuit, qutrits=qutrits, ancillae=ancillae, clean=False)
+    unitary = circuit_unitary(circuit, qutrits=qutrits, boson_regs=boson_regs,
+                              ancillae=ancillae, clean=False)
     return validate_unitary(unitary, target,
-                            subspace=subspace, exponentiate=exponentiate,
+                            subspace=subspace, shape=shape, exponentiate=exponentiate,
                             diagonal=diagonal, result_only=result_only)
 
 
 def validate_unitary(
     unitary: np.ndarray,
     target: np.ndarray,
-    subspace: Sequence[int] = None,
+    subspace: Sequence[int] | tuple[Sequence[int], ...] = None,
+    shape: Optional[tuple[int, ...]] = None,
     exponentiate=True,
     diagonal=False,
     result_only=True
@@ -94,7 +109,15 @@ def validate_unitary(
     else:
         target = target.copy()
 
-    if subspace is not None:
+    if isinstance(subspace, tuple):
+        if shape is None:
+            shape = (2,) * len(subspace)
+        full_dim = np.prod(shape)
+        unitary = unitary.reshape((full_dim,) + shape)[(slice(None),) + subspace]
+        unitary = unitary.reshape(full_dim, len(subspace[0]))
+        target = target.reshape((full_dim,) + shape)[(slice(None),) + subspace]
+        target = target.reshape(full_dim, len(subspace[0]))
+    elif subspace is not None:
         unitary = unitary[:, subspace]
         target = target[:, subspace]
 
