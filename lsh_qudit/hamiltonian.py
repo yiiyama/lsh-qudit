@@ -4,6 +4,7 @@ from typing import Optional, Union
 import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.circuit import Gate, ParameterExpression
+from qiskit.circuit.library import RCCXGate
 from .gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate, XminusGate,
                     ParameterValueType, QubitQutritCompositeGate,
                     QubitQutritCRxMinusPiGate, QubitQutritCRxPlusPiGate)
@@ -13,40 +14,6 @@ from .parity_network import parity_network
 
 BOSON_TRUNC = 3
 BOSONIC_QUBITS = 2
-
-
-class RCCXGate(Gate):
-    """RCCX gate."""
-    def __init__(self, label: Optional[str] = None):
-        """Create new RCCX gate."""
-        super().__init__("rccx", 3, [], label=label)
-
-    def _define(self):
-        qr = QuantumRegister(3, 'q')
-        qc = QuantumCircuit(qr, name=self.name)
-        qc.ry(-np.pi / 4., qr[2])
-        qc.cx(qr[1], qr[2])
-        qc.ry(-np.pi / 4., qr[2])
-        qc.cx(qr[0], qr[2])
-        qc.ry(np.pi / 4., qr[2])
-        qc.cx(qr[1], qr[2])
-        qc.ry(np.pi / 4., qr[2])
-        self.definition = qc
-
-    def inverse(self, annotated: bool = False):
-        return RCCXGate()
-
-    def __eq__(self, other):
-        return isinstance(other, RCCXGate)
-
-    def __array__(self, dtype=None, copy=None):
-        if copy is False:
-            raise ValueError("unable to avoid copy while creating an array as requested")
-        arr = np.eye(8, dtype=dtype or complex)
-        arr[1, 1] = -1.
-        arr[3, 3] = 0.
-        arr[[3, 7], [7, 3]] = 1.
-        return arr
 
 
 if BOSONIC_QUBITS == 'qutrit':
@@ -376,14 +343,12 @@ def electric_3b_term(
         if BOSONIC_QUBITS == 'qutrit':
             circuit.append(CQGate(-0.5 * time_step), [qp['l', site], qp['d', site]])
         else:
-            # coeffs = np.zeros((2, 2, 2))
-            # coeffs[0, 1, 1] = 0.5
-            # coeffs[1, 0, 1] = 1.
-            # circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
-            #                 qubits=[qp['l', site], qp['d0', site], qp['d1', site]], inplace=True)
-            # Optimization specific for BOSON_TRUNC=3
-            circuit.cp(-0.5 * time_step, qp['l', site], qp['d0', site])
-            circuit.cp(-time_step, qp['l', site], qp['d1', site])
+            coeffs = np.zeros((2, 2, 2))
+            coeffs[0, 1, 1] = 0.5
+            coeffs[1, 0, 1] = 1.
+            circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
+                            qubits=[qp['l', site], qp['d0', site], qp['d1', site]],
+                            inplace=True)
 
         circuit.append(RCCXGate(), [qp['i', site], qp['o', site], qp['l', site]])
         circuit.x(qp['i'])
@@ -537,21 +502,27 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
 
     match (term_type, site % 2):
         case (1, 0):
-            labels = ["p", "x", "x'", "y'", "q", "y", "pd", "qd"]
+            labels = ["p", "x", "x'", "y'", "q", "y"]
         case (1, 1):
-            labels = ["x", "p", "x'", "q", "y'", "y", "pd", "qd"]
+            labels = ["x", "p", "x'", "q", "y'", "y"]
         case (2, 0):
-            labels = ["q", "y", "y'", "x'", "p", "x", "pd", "qd"]
+            labels = ["q", "y", "y'", "x'", "p", "x"]
         case (2, 1):
-            labels = ["y", "q", "y'", "p", "x'", "x", "pd", "qd"]
+            labels = ["y", "q", "y'", "p", "x'", "x"]
     if boson_ops['p'][0] == 'id':
         labels.remove("p")
-    if boson_ops['p'][0] != 'lambda':
-        labels.remove("pd")
+    elif boson_ops['p'][0] == 'lambda':
+        if BOSONIC_QUBITS == 'qutrit':
+            labels.append("pd")
+        else:
+            labels.extend(f"pd{i}" for i in range(BOSONIC_QUBITS))
     if boson_ops['q'][0] == 'id':
         labels.remove("q")
-    if boson_ops['q'][0] != 'lambda':
-        labels.remove("qd")
+    elif boson_ops['q'][0] == 'lambda':
+        if BOSONIC_QUBITS == 'qutrit':
+            labels.append("qd")
+        else:
+            labels.extend(f"qd{i}" for i in range(BOSONIC_QUBITS))
 
     default_qp = QubitPlacement([qubit_labels[label] for label in labels])
 
@@ -683,7 +654,7 @@ def _hopping_usvd_decrementer(circuit, qpl, fermions, boson):
         circuit.append(CCXminusGate(), qargs + [qpl(boson + "d")])
     else:
         circuit.append(RCCXGate(), qargs)
-        if BOSON_TRUNC == 2 ** BOSONIC_QUBITS - 1:
+        if BOSON_TRUNC == 2 ** BOSONIC_QUBITS:
             raise NotImplementedError('QFT-based decrementer')
         elif BOSON_TRUNC == 3 and BOSONIC_QUBITS == 2:
             circuit.cx(*[qpl(boson + suffix) for suffix in ['', 'd0']])
