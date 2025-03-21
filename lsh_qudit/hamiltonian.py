@@ -1,10 +1,12 @@
+"""Functions to generate circuits for components of the LSH SU(2) Hamiltonian."""
 from collections import namedtuple
 from numbers import Number
 from typing import Optional, Union
 import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.circuit import Gate, ParameterExpression
-from qiskit.circuit.library import RCCXGate
+# from qiskit.circuit.library import RCCXGate
+from .set_rccx_inverse import RCCXGate
 from .gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate, XminusGate,
                     ParameterValueType, QubitQutritCompositeGate,
                     QubitQutritCRxMinusPiGate, QubitQutritCRxPlusPiGate)

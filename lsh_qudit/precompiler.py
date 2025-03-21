@@ -2,7 +2,7 @@
 import numpy as np
 from qiskit.circuit import QuantumRegister
 from qiskit.circuit.commutation_library import SessionCommutationChecker as scc
-from qiskit.circuit.library import CCZGate, CXGate, HGate, RYGate, RZGate
+from qiskit.circuit.library import CCZGate, CXGate, HGate, RYGate, RZGate, TGate, TdgGate
 from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGCircuit, DAGOpNode
 from qiskit.transpiler import TransformationPass
@@ -312,24 +312,28 @@ class LSHPrecompiler(TransformationPass):
         if out_incr > 0:
             apply_outward = subdag.apply_operation_back
             apply_inward = subdag.apply_operation_front
-            angle = np.pi / 4.
+            out_gate = TdgGate()
+            in_gate = TGate()
         else:
             apply_outward = subdag.apply_operation_front
             apply_inward = subdag.apply_operation_back
-            angle = -np.pi / 4.
+            out_gate = TGate()
+            in_gate = TdgGate()
         # Apply the 1Q gates on t to the new c2, and vice versa
-        apply_outward(RYGate(angle), [qreg[1]])
+        apply_outward(out_gate, [qreg[1]])
+        apply_outward(HGate(), [qreg[1]])
         for node in t_1q_nodes:
             apply_outward(node.op, [qreg[1]])
         for node in c2_1q_nodes:
             apply_inward(node.op, [qreg[2]])
         apply_inward(CXGate(), [qreg[2], qreg[1]])
-        apply_inward(RYGate(angle), [qreg[1]])
+        apply_inward(in_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[0], qreg[1]])
-        apply_inward(RYGate(-angle), [qreg[1]])
+        apply_inward(out_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[1], qreg[2]])
         apply_inward(CXGate(), [qreg[2], qreg[1]])
-        apply_inward(RYGate(-angle), [qreg[2]])
+        apply_inward(in_gate, [qreg[2]])
+        apply_inward(HGate(), [qreg[2]])
 
         dag.substitute_node_with_dag(rccx_node, subdag)
         return True
@@ -403,24 +407,28 @@ class LSHPrecompiler(TransformationPass):
         if out_incr > 0:
             apply_outward = subdag.apply_operation_back
             apply_inward = subdag.apply_operation_front
-            angle = np.pi / 4.
+            out_gate = TdgGate()
+            in_gate = TGate()
         else:
             apply_outward = subdag.apply_operation_front
             apply_inward = subdag.apply_operation_back
-            angle = -np.pi / 4.
+            out_gate = TGate()
+            in_gate = TdgGate()
         # Apply the 1Q gates on t to the new c, and vice versa
-        apply_outward(RYGate(angle), [qreg[0]])
+        apply_outward(out_gate, [qreg[0]])
+        apply_outward(HGate(), [qreg[0]])
         for node in t_1q_nodes:
             apply_outward(node.op, [qreg[0]])
         for node in c2_1q_nodes:
             apply_inward(node.op, [qreg[1]])
         apply_inward(CXGate(), [qreg[0], qreg[1]])
         apply_inward(CXGate(), [qreg[1], qreg[0]])
-        apply_inward(RYGate(angle), [qreg[1]])
+        apply_inward(in_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[2], qreg[1]])
-        apply_inward(RYGate(-angle), [qreg[1]])
+        apply_inward(out_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[0], qreg[1]])
-        apply_inward(RYGate(-angle), [qreg[1]])
+        apply_inward(in_gate, [qreg[1]])
+        apply_inward(HGate(), [qreg[1]])
 
         wires = {qreg[0]: control_qubit, qreg[1]: target_qubit, qreg[2]: idle_qubit}
         dag.substitute_node_with_dag(rccx_node, subdag, wires=wires)
@@ -431,17 +439,17 @@ class LSHPrecompiler(TransformationPass):
         subdag.add_qreg(qreg)
         if out_incr > 0:
             apply_inward = subdag.apply_operation_front
-            angle = np.pi / 4.
         else:
             apply_inward = subdag.apply_operation_back
-            angle = -np.pi / 4.
-        apply_inward(RYGate(angle), [qreg[1]])
+        apply_inward(HGate(), [qreg[1]])
+        apply_inward(out_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[0], qreg[1]])
-        apply_inward(RYGate(angle), [qreg[1]])
+        apply_inward(in_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[2], qreg[1]])
-        apply_inward(RYGate(-angle), [qreg[1]])
+        apply_inward(out_gate, [qreg[1]])
         apply_inward(CXGate(), [qreg[0], qreg[1]])
-        apply_inward(RYGate(-angle), [qreg[1]])
+        apply_inward(in_gate, [qreg[1]])
+        apply_inward(HGate(), [qreg[1]])
 
         wires = {qreg[0]: control_qubit, qreg[1]: target_qubit, qreg[2]: idle_qubit}
         dag.substitute_node_with_dag(inverse_node, subdag, wires=wires)

@@ -56,6 +56,11 @@ def circuit_unitary(
         full_shape = tuple(full_shape[iq] for iq in range(num_qubits - 1, -1, -1)
                            if iq not in ancillae)
         num_qubits -= len(ancillae)
+        # update the qubit map
+        qubit_map = {}
+        for iq in list(range(circuit.num_qubits))[::-1]:
+            if iq not in ancillae:
+                qubit_map[circuit.qubits[iq]] = len(qubit_map)
 
     for reg in boson_regs:
         axes = np.array([qubit_map[circuit.qubits[iq]] for iq in reg[::-1]])
