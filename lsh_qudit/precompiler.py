@@ -1,35 +1,39 @@
-"""Precompiler pass to ensure certain gate cancellations take place."""
+"""Precompiler pass to ensure certain gate cancellations take place.
+
+Our application has specific simplifying gate patterns that may be missed by the qiskit
+transpiler. We therefore insert this pass as the first node of the "init" transpiler stage.
+Specifically, we cancel:
+
+- Incrementer-decrementer pair: In transition from one hopping term to another)
+- RCCX-SWAP: Occurs in the U_SVD circuit
+- CP-SWAP: Occurs after the H_E[3] circuit
+- CX-SWAP: Happens occasionally
+
+Sequential Toffoli gates are handled by the default transpiler properly.
+
+When using certain transmons as qutrits, we further replace the remaining uncancelled SWAPs with
+three CXs to avoid qubits getting routed by the transpiler.
+"""
 import numpy as np
 from qiskit.circuit import QuantumRegister
 from qiskit.circuit.commutation_library import SessionCommutationChecker as scc
-from qiskit.circuit.library import CCZGate, CXGate, HGate, RYGate, RZGate, TGate, TdgGate
+from qiskit.circuit.library import (CCZGate, CXGate, HGate, RZGate, TGate, TdgGate, XGate, SwapGate,
+                                    CCXGate, RCCXGate)
 from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGCircuit, DAGOpNode
-from qiskit.transpiler import TransformationPass
+from qiskit.transpiler import TransformationPass, PassManager
+from qiskit.transpiler.passes import Size, FixedPoint
+from qiskit.transpiler.passes.optimization import InverseCancellation
+from qiskit.transpiler.passes.utils import RemoveBarriers
+from qiskit.passmanager.flow_controllers import DoWhileController
 
 from .parity_network import parity_walk_up, parity_walk_down, parity_walk_upr, parity_walk_downr
 from .utils import diag_to_iz
 
 
-class LSHPrecompiler(TransformationPass):
-    """Gate cancellation pass for CX-SWAP, RCCX-SWAP, and clambda+- pairs.
-
-    Our application has specific simplifying gate patterns that may be missed by the qiskit
-    transpiler. We therefore insert this pass as the first node of the "init" transpiler stage.
-    Specifically, we cancel:
-
-    - Incrementer-decrementer pair: In transition from one hopping term to another)
-    - RCCX-SWAP: Occurs in the U_SVD circuit
-    - CP-SWAP: Occurs after the H_E[3] circuit
-    - CX-SWAP: Happens occasionally
-
-    Sequential Toffoli gates are handled by the default transpiler properly.
-
-    When using certain transmons as qutrits, we further replace the remaining uncancelled SWAPs with
-    three CXs to avoid qubits getting routed by the transpiler.
-    """
+class ReplaceDoublyControlledIncrementers(TransformationPass):
+    """Replace all CCXs with H-CCZ-H and CCX+/-s with RCCX-CX+--RCCX."""
     def run(self, dag: DAGCircuit) -> DAGCircuit:
-        # Replace all CCXs with H-CCZ-H and CCX+/-s with RCCX-CX+--RCCX
         for node in dag.topological_op_nodes():
             if node.op.name == 'ccx':
                 subdag = DAGCircuit()
@@ -43,213 +47,32 @@ class LSHPrecompiler(TransformationPass):
                 subdag = circuit_to_dag(node.op.definition)
                 dag.substitute_node_with_dag(node, subdag)
 
-        # RCCX-SWAP/CX and CCZ-SWAP/CX
-        while True:
-            for node in dag.topological_op_nodes():
-                if node.op.name == 'rccx':
-                    ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
-                    if node.qargs[2] == ordered_qargs[1]:
-                        if self._replace_swap_rccx_ctc(dag, node):
-                            break
-                    else:
-                        if self._replace_swap_rccx_cct(dag, node):
-                            break
-                if (node.op.name == 'ccz'
-                        and (self._replace_swapcx_ccz(dag, node, 1)
-                             or self._replace_swapcx_ccz(dag, node, -1))):
-                    break
-            else:
-                break
+        return dag
 
-        # Decompose the remaining custom gates to expose the CXs
+
+def merge_3q_2q_not_done(property_set):
+    return not property_set.get('merge_3q_2q_done', False)
+
+
+class Merge3QAnd2QGates(TransformationPass):
+    """Merge RCCX-SWAP/CX and CCZ-SWAP/CX. To be placed in a while loop."""
+    def run(self, dag: DAGCircuit) -> DAGCircuit:
         for node in dag.topological_op_nodes():
             if node.op.name == 'rccx':
                 ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
                 if node.qargs[2] == ordered_qargs[1]:
-                    subdag = circuit_to_dag(node.op.definition)
+                    if self._replace_swap_rccx_ctc(dag, node):
+                        break
                 else:
-                    # Compile for linear topology
-                    subdag = DAGCircuit()
-                    qreg = QuantumRegister(3)
-                    subdag.add_qreg(qreg)
-                    subdag.apply_operation_back(RYGate(-np.pi / 4.), [qreg[2]])
-                    subdag.apply_operation_back(CXGate(), [qreg[2], qreg[1]])
-                    subdag.apply_operation_back(CXGate(), [qreg[1], qreg[2]])
-                    subdag.apply_operation_back(RYGate(-np.pi / 4.), [qreg[1]])
-                    subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
-                    subdag.apply_operation_back(RYGate(np.pi / 4.), [qreg[1]])
-                    subdag.apply_operation_back(CXGate(), [qreg[1], qreg[2]])
-                    subdag.apply_operation_back(CXGate(), [qreg[2], qreg[1]])
-                    subdag.apply_operation_back(RYGate(np.pi / 4.), [qreg[2]])
-            elif node.op.name in ('cxminus', 'cxplus', 'cq'):
-                subdag = circuit_to_dag(node.op.definition)
-            else:
-                continue
-            mapping = {qubit: qarg for qubit, qarg in zip(subdag.qubits, node.qargs)}
-            dag.substitute_node_with_dag(node, subdag, wires=mapping)
-
-        # SWAP-SWAP/CX and CP-SWAP/CX
-        while True:
-            for node in dag.topological_op_nodes():
-                if (node.op.name in ('swap', 'cp')
-                        and (self._replace_swapcx_swapcp(dag, node, 1)
-                             or self._replace_swapcx_swapcp(dag, node, -1))):
-                    break
-            else:
+                    if self._replace_swap_rccx_cct(dag, node):
+                        break
+            if (node.op.name == 'ccz' and (self._replace_swapcx_ccz(dag, node, 1)
+                                           or self._replace_swapcx_ccz(dag, node, -1))):
                 break
-
-        # We want the qubits fixed to the initial layout
-        # -> Resolve the remaining CCZs and SWAPs so the downstream passes don't try to route the
-        # qubits
-        for node in dag.topological_op_nodes():
-            if node.op.name == 'swap':
-                subdag = DAGCircuit()
-                qreg = QuantumRegister(2)
-                subdag.add_qreg(qreg)
-                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
-                subdag.apply_operation_back(CXGate(), [qreg[1], qreg[0]])
-                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
-                dag.substitute_node_with_dag(node, subdag)
-            elif node.op.name == 'ccz':
-                hccz = np.zeros((2, 2, 2))
-                hccz[1, 1, 1] = np.pi
-                subdag = circuit_to_dag(parity_walk_up(diag_to_iz(hccz)))
-                ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
-                dag.substitute_node_with_dag(node, subdag,
-                                             wires=dict(zip(subdag.qubits, ordered_qargs)))
-            elif node.op.name == 'cp':
-                phi = node.op.params[0]
-                subdag = DAGCircuit()
-                qreg = QuantumRegister(2)
-                subdag.add_qreg(qreg)
-                subdag.apply_operation_back(RZGate(phi / 2.), [qreg[0]])
-                subdag.apply_operation_back(RZGate(phi / 2.), [qreg[1]])
-                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
-                subdag.apply_operation_back(RZGate(-phi / 2.), [qreg[1]])
-                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
-                dag.substitute_node_with_dag(node, subdag)
+        else:
+            self.property_set['merge_3q_2q_done'] = True
 
         return dag
-
-    def _replace_swapcx_swapcp(self, dag: DAGCircuit, swapcp_node: DAGOpNode, out_incr: int):
-        nodes_on_q0 = list(dag.nodes_on_wire(swapcp_node.qargs[0], only_ops=True))
-        swap_node_idx = nodes_on_q0.index(swapcp_node)
-        if out_incr > 0:
-            outward = dag.op_successors
-            inward = dag.op_predecessors
-            out_incr = 1
-            if swap_node_idx == len(nodes_on_q0) - 1:
-                return False
-        else:
-            outward = dag.op_predecessors
-            inward = dag.op_successors
-            out_incr = -1
-            if swap_node_idx == 0:
-                return False
-
-        test = nodes_on_q0[swap_node_idx + out_incr]
-        # Trace outward the 1Q run
-        q0_1q_nodes = []
-        while len(test.qargs) == 1:
-            q0_1q_nodes.append(test)
-            if not (tests := list(outward(test))):
-                # We hit the beginning/end of the circuit
-                return False
-            test = tests[0]
-
-        if test.op.name not in ['cx', 'swap'] or set(test.qargs) != set(swapcp_node.qargs):
-            return False
-
-        twoq_node = test
-        nodes_on_q1 = list(dag.nodes_on_wire(swapcp_node.qargs[1], only_ops=True))
-        twoq_node_idx = nodes_on_q1.index(twoq_node)
-
-        # Move inward on the other wire
-        test = nodes_on_q1[twoq_node_idx - out_incr]
-
-        # Trace inward the 1Q run
-        q1_1q_nodes = []
-        while len(test.qargs) == 1:
-            q1_1q_nodes.append(test)
-            test = list(inward(test))[0]
-
-        if test != swapcp_node:
-            return False
-
-        subdag = DAGCircuit()
-        qreg = QuantumRegister(2)
-        subdag.add_qreg(qreg)
-        if out_incr > 0:
-            apply_outward = subdag.apply_operation_back
-            apply_inward = subdag.apply_operation_front
-        else:
-            apply_outward = subdag.apply_operation_front
-            apply_inward = subdag.apply_operation_back
-
-        if swapcp_node.op.name == 'swap':
-            # Move 1Q gates to the other side of swap
-            for node in q0_1q_nodes:
-                apply_outward(node.op, [qreg[1]])
-            for node in q1_1q_nodes:
-                apply_inward(node.op, [qreg[0]])
-
-            if twoq_node.op.name == 'cx':
-                ctrl = next(idx for idx, bit in enumerate(swapcp_node.qargs)
-                            if bit == twoq_node.qargs[0])
-                targ = 1 - ctrl
-                apply_outward(CXGate(), [qreg[ctrl], qreg[targ]])
-                apply_outward(CXGate(), [qreg[targ], qreg[ctrl]])
-        else:  # cp
-            phi = swapcp_node.op.params[0]
-            if twoq_node.op.name == 'cx':
-                ctrl = next(idx for idx, bit in enumerate(swapcp_node.qargs)
-                            if bit == twoq_node.qargs[0])
-                targ = 1 - ctrl
-                apply_outward(RZGate(phi / 2.), [qreg[ctrl]])
-                apply_outward(RZGate(phi / 2.), [qreg[targ]])
-                apply_outward(CXGate(), [qreg[ctrl], qreg[targ]])
-                apply_outward(RZGate(-phi / 2.), [qreg[targ]])
-
-                for nodes, qubit in [(list(q0_1q_nodes), qreg[0]),
-                                     (list(q1_1q_nodes[::-1]), qreg[1])]:
-                    cp_side = 0 if out_incr > 0 else -1
-                    cx_side = -1 if out_incr > 0 else 0
-                    cp_side_nodes = []
-                    cx_side_nodes = []
-                    while nodes:
-                        if scc.commute_nodes(swapcp_node, nodes[cp_side]):
-                            cp_side_nodes.append(nodes.pop(cp_side))
-                        elif scc.commute_nodes(twoq_node, nodes[cx_side]):
-                            cx_side_nodes.append(nodes.pop(cx_side))
-                        else:
-                            break
-                    if nodes:
-                        # Has non-commuting 1Q gate in between
-                        return False
-
-                    for node in cp_side_nodes[::-1]:
-                        apply_inward(node.op, [qubit])
-                    for node in cx_side_nodes[::-1]:
-                        apply_outward(node.op, [qubit])
-            else:
-                # Move the 1Q gates to the other side of the swap
-                for node in q0_1q_nodes:
-                    apply_outward(node.op, [qreg[1]])
-                for node in q1_1q_nodes:
-                    apply_inward(node.op, [qreg[0]])
-                apply_inward(CXGate(), [qreg[0], qreg[1]])
-                apply_inward(CXGate(), [qreg[1], qreg[0]])
-                apply_inward(RZGate(-phi / 2.), [qreg[1]])
-                apply_inward(CXGate(), [qreg[0], qreg[1]])
-                apply_inward(RZGate(phi / 2.), [qreg[0]])
-                apply_inward(RZGate(phi / 2.), [qreg[1]])
-
-        # Remove the original 1Q and SWAP/CX gates
-        for node in q0_1q_nodes + q1_1q_nodes + [twoq_node]:
-            dag.remove_op_node(node)
-
-        dag.substitute_node_with_dag(swapcp_node, subdag)
-        return True
 
     def _replace_swap_rccx_cct(self, dag: DAGCircuit, rccx_node: DAGOpNode):
         # Find the adjacent node on the target wire
@@ -591,3 +414,268 @@ class LSHPrecompiler(TransformationPass):
         dag.substitute_node_with_dag(ccz_node, subdag,
                                      wires=dict(zip(qreg, ordered_qargs)))
         return True
+
+
+class LinearRCCX(TransformationPass):
+    """Decompose RCCX gates into circuits optimized for the linear topology."""
+    def run(self, dag: DAGCircuit) -> DAGCircuit:
+        for node in dag.topological_op_nodes():
+            if node.op.name == 'rccx':
+                ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
+                if node.qargs[2] == ordered_qargs[1]:
+                    subdag = circuit_to_dag(node.op.definition)
+                else:
+                    # Compile for linear topology
+                    subdag = DAGCircuit()
+                    qreg = QuantumRegister(3)
+                    subdag.add_qreg(qreg)
+                    subdag.apply_operation_back(HGate(), [qreg[2]])
+                    subdag.apply_operation_back(TGate(), [qreg[2]])
+                    subdag.apply_operation_back(CXGate(), [qreg[2], qreg[1]])
+                    subdag.apply_operation_back(CXGate(), [qreg[1], qreg[2]])
+                    subdag.apply_operation_back(TdgGate(), [qreg[1]])
+                    subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                    subdag.apply_operation_back(TGate(), [qreg[1]])
+                    subdag.apply_operation_back(CXGate(), [qreg[1], qreg[2]])
+                    subdag.apply_operation_back(CXGate(), [qreg[2], qreg[1]])
+                    subdag.apply_operation_back(TdgGate(), [qreg[2]])
+                    subdag.apply_operation_back(HGate(), [qreg[2]])
+
+                mapping = {qubit: qarg for qubit, qarg in zip(subdag.qubits, node.qargs)}
+                dag.substitute_node_with_dag(node, subdag, wires=mapping)
+
+        return dag
+
+
+class DecomposeQutritGates(TransformationPass):
+    """Decompose the qutrit gates into preset definition circuits."""
+    def run(self, dag: DAGCircuit) -> DAGCircuit:
+        # Decompose the remaining custom gates to expose the CXs
+        for node in dag.topological_op_nodes():
+            if node.op.name in ('cxminus', 'cxplus', 'cq'):
+                subdag = circuit_to_dag(node.op.definition)
+                mapping = {qubit: qarg for qubit, qarg in zip(subdag.qubits, node.qargs)}
+                dag.substitute_node_with_dag(node, subdag, wires=mapping)
+
+        return dag
+
+
+def merge_swapcp_cx_not_done(property_set):
+    return not property_set.get('merge_swapcp_cx_done', False)
+
+
+class MergeSWAPCPAndCX(TransformationPass):
+    """Cancel CXs within SWAPs with external CXs. To be placed in a while loop."""
+    def run(self, dag: DAGCircuit) -> DAGCircuit:
+        for node in dag.topological_op_nodes():
+            if (node.op.name in ('swap', 'cp') and (self._replace_swapcx_swapcp(dag, node, 1)
+                                                    or self._replace_swapcx_swapcp(dag, node, -1))):
+                break
+        else:
+            self.property_set['merge_swapcp_cx_done'] = True
+
+        return dag
+
+    def _replace_swapcx_swapcp(self, dag: DAGCircuit, swapcp_node: DAGOpNode, out_incr: int):
+        nodes_on_q0 = list(dag.nodes_on_wire(swapcp_node.qargs[0], only_ops=True))
+        swap_node_idx = nodes_on_q0.index(swapcp_node)
+        if out_incr > 0:
+            outward = dag.op_successors
+            inward = dag.op_predecessors
+            out_incr = 1
+            if swap_node_idx == len(nodes_on_q0) - 1:
+                return False
+        else:
+            outward = dag.op_predecessors
+            inward = dag.op_successors
+            out_incr = -1
+            if swap_node_idx == 0:
+                return False
+
+        test = nodes_on_q0[swap_node_idx + out_incr]
+        # Trace outward the 1Q run
+        q0_1q_nodes = []
+        while len(test.qargs) == 1:
+            q0_1q_nodes.append(test)
+            if not (tests := list(outward(test))):
+                # We hit the beginning/end of the circuit
+                return False
+            test = tests[0]
+
+        if test.op.name not in ['cx', 'swap'] or set(test.qargs) != set(swapcp_node.qargs):
+            return False
+
+        twoq_node = test
+        nodes_on_q1 = list(dag.nodes_on_wire(swapcp_node.qargs[1], only_ops=True))
+        twoq_node_idx = nodes_on_q1.index(twoq_node)
+
+        # Move inward on the other wire
+        test = nodes_on_q1[twoq_node_idx - out_incr]
+
+        # Trace inward the 1Q run
+        q1_1q_nodes = []
+        while len(test.qargs) == 1:
+            q1_1q_nodes.append(test)
+            test = list(inward(test))[0]
+
+        if test != swapcp_node:
+            return False
+
+        subdag = DAGCircuit()
+        qreg = QuantumRegister(2)
+        subdag.add_qreg(qreg)
+        if out_incr > 0:
+            apply_outward = subdag.apply_operation_back
+            apply_inward = subdag.apply_operation_front
+        else:
+            apply_outward = subdag.apply_operation_front
+            apply_inward = subdag.apply_operation_back
+
+        if swapcp_node.op.name == 'swap':
+            # Move 1Q gates to the other side of swap
+            for node in q0_1q_nodes:
+                apply_outward(node.op, [qreg[1]])
+            for node in q1_1q_nodes:
+                apply_inward(node.op, [qreg[0]])
+
+            if twoq_node.op.name == 'cx':
+                ctrl = next(idx for idx, bit in enumerate(swapcp_node.qargs)
+                            if bit == twoq_node.qargs[0])
+                targ = 1 - ctrl
+                apply_outward(CXGate(), [qreg[ctrl], qreg[targ]])
+                apply_outward(CXGate(), [qreg[targ], qreg[ctrl]])
+        else:  # cp
+            phi = swapcp_node.op.params[0]
+            if twoq_node.op.name == 'cx':
+                ctrl = next(idx for idx, bit in enumerate(swapcp_node.qargs)
+                            if bit == twoq_node.qargs[0])
+                targ = 1 - ctrl
+                apply_outward(RZGate(phi / 2.), [qreg[ctrl]])
+                apply_outward(RZGate(phi / 2.), [qreg[targ]])
+                apply_outward(CXGate(), [qreg[ctrl], qreg[targ]])
+                apply_outward(RZGate(-phi / 2.), [qreg[targ]])
+
+                for nodes, qubit in [(list(q0_1q_nodes), qreg[0]),
+                                     (list(q1_1q_nodes[::-1]), qreg[1])]:
+                    cp_side = 0 if out_incr > 0 else -1
+                    cx_side = -1 if out_incr > 0 else 0
+                    cp_side_nodes = []
+                    cx_side_nodes = []
+                    while nodes:
+                        if scc.commute_nodes(swapcp_node, nodes[cp_side]):
+                            cp_side_nodes.append(nodes.pop(cp_side))
+                        elif scc.commute_nodes(twoq_node, nodes[cx_side]):
+                            cx_side_nodes.append(nodes.pop(cx_side))
+                        else:
+                            break
+                    if nodes:
+                        # Has non-commuting 1Q gate in between
+                        return False
+
+                    for node in cp_side_nodes[::-1]:
+                        apply_inward(node.op, [qubit])
+                    for node in cx_side_nodes[::-1]:
+                        apply_outward(node.op, [qubit])
+            else:
+                # Move the 1Q gates to the other side of the swap
+                for node in q0_1q_nodes:
+                    apply_outward(node.op, [qreg[1]])
+                for node in q1_1q_nodes:
+                    apply_inward(node.op, [qreg[0]])
+                apply_inward(CXGate(), [qreg[0], qreg[1]])
+                apply_inward(CXGate(), [qreg[1], qreg[0]])
+                apply_inward(RZGate(-phi / 2.), [qreg[1]])
+                apply_inward(CXGate(), [qreg[0], qreg[1]])
+                apply_inward(RZGate(phi / 2.), [qreg[0]])
+                apply_inward(RZGate(phi / 2.), [qreg[1]])
+
+        # Remove the original 1Q and SWAP/CX gates
+        for node in q0_1q_nodes + q1_1q_nodes + [twoq_node]:
+            dag.remove_op_node(node)
+
+        dag.substitute_node_with_dag(swapcp_node, subdag)
+        return True
+
+
+class DecomposeSWAPCPCCZ(TransformationPass):
+    """Decompose SWAP/CP/CCZ gates to linear-optimized circuits.
+
+    We want the qubits fixed to the initial layout
+    -> Resolve the remaining CCZs and SWAPs so the downstream passes don't try to route the
+    qubits.
+    """
+    def run(self, dag: DAGCircuit) -> DAGCircuit:
+        for node in dag.topological_op_nodes():
+            if node.op.name == 'swap':
+                subdag = DAGCircuit()
+                qreg = QuantumRegister(2)
+                subdag.add_qreg(qreg)
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                subdag.apply_operation_back(CXGate(), [qreg[1], qreg[0]])
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                dag.substitute_node_with_dag(node, subdag)
+            elif node.op.name == 'ccz':
+                hccz = np.zeros((2, 2, 2))
+                hccz[1, 1, 1] = np.pi
+                subdag = circuit_to_dag(parity_walk_up(diag_to_iz(hccz)))
+                ordered_qargs = sorted(node.qargs, key=lambda bit: dag.find_bit(bit).index)
+                dag.substitute_node_with_dag(node, subdag,
+                                             wires=dict(zip(subdag.qubits, ordered_qargs)))
+            elif node.op.name == 'cp':
+                phi = node.op.params[0]
+                subdag = DAGCircuit()
+                qreg = QuantumRegister(2)
+                subdag.add_qreg(qreg)
+                subdag.apply_operation_back(RZGate(phi / 2.), [qreg[0]])
+                subdag.apply_operation_back(RZGate(phi / 2.), [qreg[1]])
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                subdag.apply_operation_back(RZGate(-phi / 2.), [qreg[1]])
+                subdag.apply_operation_back(CXGate(), [qreg[0], qreg[1]])
+                dag.substitute_node_with_dag(node, subdag)
+
+        return dag
+
+
+def lsh_qudit_precompiler(use_qutrit=False):
+    """Construct a default precompiler pass manager."""
+    def size_not_minimized(property_set):
+        return not property_set['size_fixed_point']
+
+    tasks = [
+        RemoveBarriers(),
+        DoWhileController(
+            [
+                InverseCancellation(
+                    [XGate(), HGate(), CXGate(), CCXGate(), SwapGate(), RCCXGate()]
+                ),
+                Size(recurse=True),
+                FixedPoint('size')
+            ],
+            do_while=size_not_minimized
+        ),
+        ReplaceDoublyControlledIncrementers(),
+        DoWhileController(
+            [Merge3QAnd2QGates()],
+            do_while=merge_3q_2q_not_done
+        ),
+        LinearRCCX()
+    ]
+    if use_qutrit:
+        tasks.append(DecomposeQutritGates())
+    tasks += [
+        DoWhileController(
+            [MergeSWAPCPAndCX()],
+            do_while=merge_swapcp_cx_not_done
+        ),
+        DecomposeSWAPCPCCZ(),
+        DoWhileController(
+            [
+                InverseCancellation([XGate(), HGate(), CXGate()]),
+                Size(recurse=True),
+                FixedPoint('size')
+            ],
+            do_while=size_not_minimized
+        )
+    ]
+
+    return PassManager(tasks)
