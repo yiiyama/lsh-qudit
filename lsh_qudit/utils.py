@@ -123,7 +123,7 @@ def remove_idle_wires(qc: QuantumCircuit, inplace=False, flatten=False, keep_qub
     return qc
 
 
-def op_matrix(op, shape, qubits):
+def op_matrix(op, shape, qubits, npmod=np):
     """Embed a square matrix op into a larger square matrix given by shape. Essentially a series of
     np.krons with identity matrices.
     Args:
@@ -134,23 +134,24 @@ def op_matrix(op, shape, qubits):
     shape = tuple(shape)
     if isinstance(qubits, int):
         qubits = (qubits,)
-    full_nq = len(shape)
-    full_dim = np.prod(shape)
-    op_nq = len(qubits)
-    op_shape = tuple(shape[::-1][i] for i in qubits)
-    op_dim = np.prod(op_shape)
-    idle_shape = tuple(dim for i, dim in enumerate(shape) if full_nq - i - 1 not in qubits)
-    idle_dim = int(np.prod(idle_shape))
-    mat = np.zeros((idle_dim, idle_dim, op_dim, op_dim), dtype=np.complex128)
-    didx = np.arange(idle_dim)
     if isinstance(op, SparsePauliOp):
         op = op.to_matrix()
-    mat[didx, didx] = op
-    mat = mat.reshape(idle_shape * 2 + op_shape * 2)
-    source = tuple(range(-2 * op_nq, 0))
-    dest = tuple(full_nq - q - 1 for q in qubits) + tuple(2 * full_nq - q - 1 for q in qubits)
-    mat = np.moveaxis(mat, source, dest)
-    mat = mat.reshape(full_dim, full_dim)
+    full_nq = len(shape)
+    full_dim = np.prod(shape)
+    op_shape = tuple(shape[::-1][i] for i in qubits)
+    idle_shape = tuple(dim for i, dim in enumerate(shape) if full_nq - i - 1 not in qubits)
+    idle_dim = int(np.prod(idle_shape))
+    mat = npmod.kron(npmod.eye(idle_dim), op).reshape((idle_shape + op_shape) * 2)
+    # Will move all axes
+    source = list(range(2 * full_nq))
+    # Idle axes go in order
+    dest = [i for i in range(full_nq) if full_nq - i - 1 not in qubits]
+    # Op axes go in specified order
+    dest += [full_nq - q - 1 for q in qubits]
+    # Do the same for column axes
+    dest += [full_nq + i for i in range(full_nq) if full_nq - i - 1 not in qubits]
+    dest += [2 * full_nq - q - 1 for q in qubits]
+    mat = npmod.moveaxis(mat, source, dest).reshape(full_dim, full_dim)
     return mat
 
 
