@@ -111,8 +111,6 @@ def validate_unitary(
     target = jnp.asarray(target)
     if exponentiate:
         target = jax.scipy.linalg.expm(-1.j * target)
-    else:
-        target = target.copy()
 
     if isinstance(subspace, tuple):
         if shape is None:
