@@ -1,12 +1,11 @@
 """Qutrit gates."""
-
 from collections.abc import Sequence
 from enum import Enum, IntEnum, auto
 from typing import Optional, Union
 import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.circuit import Barrier, Gate, Parameter
-from qiskit.circuit.library import ECRGate, HGate, RZGate, SXGate, XGate, ZGate
+from qiskit.circuit.library import ECRGate, HGate, RZGate, SXGate, XGate, ZGate, RCCXGate
 from qiskit.circuit.equivalence_library import SessionEquivalenceLibrary as sel
 # from qiskit.circuit.parameterexpression import ParameterValueType
 #  For some reason Pylance fails to recognize imported ParameterValueType as a valid type alias so
@@ -611,6 +610,157 @@ class QubitQutritCRxMinusPiGate(QubitQutritCompositeGate):
             [0., 0., 0., 0., 1., 0.],
             [0., 0., 0., 0., 0., 1.]
         ], dtype=dtype or complex)
+
+
+class CQGate(QubitQutritCompositeGate):
+    """Controled Q gate."""
+    gate_name = 'cq'
+
+    def __init__(
+        self,
+        phi: ParameterValueType,
+        label: Optional[str] = None
+    ):
+        super().__init__([phi], label=label)
+
+    def _define(self):
+        phi = self.params[0]
+        qr = QuantumRegister(2, 'q')
+        qc = QuantumCircuit(qr, name=self.name)
+        qc.append(X12Gate(), [1])
+        qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
+        qc.append(X12Gate(), [1])
+        qc.append(QGate(-0.5 * phi), [1])
+        qc.append(X12Gate(), [1])
+        qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
+        qc.append(X12Gate(), [1])
+        qc.append(QGate(0.5 * phi), [1])
+        qc.rz(phi, 0)
+        self.definition = qc
+
+    def inverse(self, annotated: bool = False):
+        return CQGate(-self.params[0])
+
+    def __eq__(self, other):
+        return isinstance(other, CQGate) and self._compare_parameters(other)
+
+    def __array__(self, dtype=None, copy=None):
+        if copy is False:
+            raise ValueError("unable to avoid copy while creating an array as requested")
+        phi = self.params[0]
+        return np.diagflat(
+                [1., 1., 1., np.exp(1.j * phi), 1., np.exp(2.j * phi)]
+            ).astype(dtype or complex)
+
+
+class CXminusGate(QubitQutritCompositeGate):
+    """Controlled X- gate."""
+    gate_name = 'cxminus'
+
+    def __init__(
+        self,
+        label: Optional[str] = None
+    ):
+        super().__init__([], label=label)
+
+    def _define(self):
+        qr = QuantumRegister(2, 'q')
+        qc = QuantumCircuit(qr, name=self.name)
+        qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
+        qc.append(XminusGate(), [1])
+        qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
+        qc.append(XplusGate(), [1])
+        qc.rz(-0.5 * np.pi, 0)
+        self.definition = qc
+
+    def inverse(self, annotated: bool = False):
+        return CXplusGate()
+
+    def __eq__(self, other):
+        return isinstance(other, CXminusGate)
+
+    def __array__(self, dtype=None, copy=None):
+        if copy is False:
+            raise ValueError("unable to avoid copy while creating an array as requested")
+        arr = np.diagflat([1., 1., 1., 0., 0., 0.]).astype(dtype or complex)
+        arr[[1, 3], [3, 5]] = 1.
+        arr[5, 1] = 1.j
+        return arr
+
+
+class CXplusGate(QubitQutritCompositeGate):
+    """Controlled X+ gate."""
+    gate_name = 'cxplus'
+
+    def __init__(
+        self,
+        label: Optional[str] = None
+    ):
+        super().__init__([], label=label)
+
+    def _define(self):
+        qr = QuantumRegister(2, 'q')
+        qc = QuantumCircuit(qr, name=self.name)
+        qc.rz(0.5 * np.pi, 0)
+        qc.append(XminusGate(), [1])
+        qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
+        qc.append(XplusGate(), [1])
+        qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
+        self.definition = qc
+
+    def inverse(self, annotated: bool = False):
+        return CXminusGate()
+
+    def __eq__(self, other):
+        return isinstance(other, CXplusGate)
+
+    def __array__(self, dtype=None, copy=None):
+        if copy is False:
+            raise ValueError("unable to avoid copy while creating an array as requested")
+        arr = np.diagflat([1., 1., 1., 0., 0., 0.]).astype(dtype or complex)
+        arr[[3, 5], [1, 3]] = 1.
+        arr[1, 5] = -1.j
+        return arr
+
+
+class CCXminusGate(Gate):
+    """Doubly controlled Xminus gate using an ancilla qubit."""
+    def __init__(self):
+        super().__init__('ccxminus', 4, [])
+
+    def _define(self):
+        qr = QuantumRegister(4)
+        qc = QuantumCircuit(qr, name=self.name)
+        qc.append(RCCXGate(), [0, 1, 2])
+        qc.append(CXminusGate(), [2, 3])
+        qc.append(RCCXGate(), [0, 1, 2])
+        self.definition = qc
+
+    def inverse(self, annotated: bool = False):
+        return CCXplusGate()
+
+    def __eq__(self, other):
+        return isinstance(other, CCXminusGate)
+
+
+class CCXplusGate(Gate):
+    """Doubly controlled Xminus gate using an ancilla qubit."""
+    def __init__(self):
+        super().__init__('ccxplus', 4, [])
+
+    def _define(self):
+        qr = QuantumRegister(4)
+        qc = QuantumCircuit(qr, name=self.name)
+        qc.append(RCCXGate(), [0, 1, 2])
+        qc.append(CXplusGate(), [2, 3])
+        qc.append(RCCXGate(), [0, 1, 2])
+        self.definition = qc
+
+    def inverse(self, annotated: bool = False):
+        return CCXminusGate()
+
+    def __eq__(self, other):
+        return isinstance(other, CCXplusGate)
 
 
 q = QuantumRegister(1, 'q')

@@ -1,15 +1,13 @@
 """Functions to generate circuits for components of the LSH SU(2) Hamiltonian."""
-from collections import namedtuple
+from dataclasses import dataclass
 from numbers import Number
 from typing import Optional, Union
 import numpy as np
-from qiskit import QuantumCircuit, QuantumRegister
-from qiskit.circuit import Gate, ParameterExpression
+from qiskit import QuantumCircuit
+from qiskit.circuit import ParameterExpression
 # from qiskit.circuit.library import RCCXGate
 from .set_rccx_inverse import RCCXGate
-from .gates import (X12Gate, P1Gate, P2Gate, QGate, XplusGate, XminusGate,
-                    ParameterValueType, QubitQutritCompositeGate,
-                    QubitQutritCRxMinusPiGate, QubitQutritCRxPlusPiGate)
+from .qutrit_gates import P1Gate, P2Gate, CQGate, CCXminusGate
 from .utils import QubitPlacement, diag_to_iz
 from .parity_network import parity_network
 
@@ -18,158 +16,12 @@ BOSON_TRUNC = 3
 BOSONIC_QUBITS = 2
 
 
-if BOSONIC_QUBITS == 'qutrit':
-    class CQGate(QubitQutritCompositeGate):
-        """Controled Q gate."""
-        gate_name = 'cq'
-
-        def __init__(
-            self,
-            phi: ParameterValueType,
-            label: Optional[str] = None
-        ):
-            super().__init__([phi], label=label)
-
-        def _define(self):
-            phi = self.params[0]
-            qr = QuantumRegister(2, 'q')
-            qc = QuantumCircuit(qr, name=self.name)
-            qc.append(X12Gate(), [1])
-            qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
-            qc.append(X12Gate(), [1])
-            qc.append(QGate(-0.5 * phi), [1])
-            qc.append(X12Gate(), [1])
-            qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
-            qc.append(X12Gate(), [1])
-            qc.append(QGate(0.5 * phi), [1])
-            qc.rz(phi, 0)
-            self.definition = qc
-
-        def inverse(self, annotated: bool = False):
-            return CQGate(-self.params[0])
-
-        def __eq__(self, other):
-            return isinstance(other, CQGate) and self._compare_parameters(other)
-
-        def __array__(self, dtype=None, copy=None):
-            if copy is False:
-                raise ValueError("unable to avoid copy while creating an array as requested")
-            phi = self.params[0]
-            return np.diagflat(
-                    [1., 1., 1., np.exp(1.j * phi), 1., np.exp(2.j * phi)]
-                ).astype(dtype or complex)
-
-    class CXminusGate(QubitQutritCompositeGate):
-        """Controlled X- gate."""
-        gate_name = 'cxminus'
-
-        def __init__(
-            self,
-            label: Optional[str] = None
-        ):
-            super().__init__([], label=label)
-
-        def _define(self):
-            qr = QuantumRegister(2, 'q')
-            qc = QuantumCircuit(qr, name=self.name)
-            qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
-            qc.append(XminusGate(), [1])
-            qc.append(QubitQutritCRxMinusPiGate(), [0, 1])
-            qc.append(XplusGate(), [1])
-            qc.rz(-0.5 * np.pi, 0)
-            self.definition = qc
-
-        def inverse(self, annotated: bool = False):
-            return CXplusGate()
-
-        def __eq__(self, other):
-            return isinstance(other, CXminusGate)
-
-        def __array__(self, dtype=None, copy=None):
-            if copy is False:
-                raise ValueError("unable to avoid copy while creating an array as requested")
-            arr = np.diagflat([1., 1., 1., 0., 0., 0.]).astype(dtype or complex)
-            arr[[1, 3], [3, 5]] = 1.
-            arr[5, 1] = 1.j
-            return arr
-
-    class CXplusGate(QubitQutritCompositeGate):
-        """Controlled X+ gate."""
-        gate_name = 'cxplus'
-
-        def __init__(
-            self,
-            label: Optional[str] = None
-        ):
-            super().__init__([], label=label)
-
-        def _define(self):
-            qr = QuantumRegister(2, 'q')
-            qc = QuantumCircuit(qr, name=self.name)
-            qc.rz(0.5 * np.pi, 0)
-            qc.append(XminusGate(), [1])
-            qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
-            qc.append(XplusGate(), [1])
-            qc.append(QubitQutritCRxPlusPiGate(), [0, 1])
-            self.definition = qc
-
-        def inverse(self, annotated: bool = False):
-            return CXminusGate()
-
-        def __eq__(self, other):
-            return isinstance(other, CXplusGate)
-
-        def __array__(self, dtype=None, copy=None):
-            if copy is False:
-                raise ValueError("unable to avoid copy while creating an array as requested")
-            arr = np.diagflat([1., 1., 1., 0., 0., 0.]).astype(dtype or complex)
-            arr[[3, 5], [1, 3]] = 1.
-            arr[1, 5] = -1.j
-            return arr
-
-    class CCXminusGate(Gate):
-        """Doubly controlled Xminus gate using an ancilla qubit."""
-        def __init__(self):
-            super().__init__('ccxminus', 4, [])
-
-        def _define(self):
-            qr = QuantumRegister(4)
-            qc = QuantumCircuit(qr, name=self.name)
-            qc.append(RCCXGate(), [0, 1, 2])
-            qc.append(CXminusGate(), [2, 3])
-            qc.append(RCCXGate(), [0, 1, 2])
-            self.definition = qc
-
-        def inverse(self, annotated: bool = False):
-            return CCXplusGate()
-
-        def __eq__(self, other):
-            return isinstance(other, CCXminusGate)
-
-    class CCXplusGate(Gate):
-        """Doubly controlled Xminus gate using an ancilla qubit."""
-        def __init__(self):
-            super().__init__('ccxplus', 4, [])
-
-        def _define(self):
-            qr = QuantumRegister(4)
-            qc = QuantumCircuit(qr, name=self.name)
-            qc.append(RCCXGate(), [0, 1, 2])
-            qc.append(CXplusGate(), [2, 3])
-            qc.append(RCCXGate(), [0, 1, 2])
-            self.definition = qc
-
-        def inverse(self, annotated: bool = False):
-            return CCXminusGate()
-
-        def __eq__(self, other):
-            return isinstance(other, CCXplusGate)
-
-HoppingTermConfig = namedtuple('HoppingTermConfig',
-                               ['qubit_labels', 'boson_ops', 'default_qp', 'gl_states', 'indices'])
-
-
-def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False):
+def physical_states(
+    num_sites: int = 1,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    as_multi: bool = False
+) -> np.ndarray:
     """Returns an array of AGL-satisfying states with optional boundary conditions.
 
     When as_multi=True, a 2-dimensional array is returned with the inner dimension corresponding
@@ -183,18 +35,14 @@ def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False
         agl_mask &= np.equal((1 - states[:, il + 0]) * states[:, il + 1] + states[:, il + 2],
                              states[:, il + 3] * (1 - states[:, il + 4]) + states[:, il + 5])
     states = states[agl_mask]
-    if isinstance(left_flux, int):
-        left_flux = (left_flux,)
-    if left_flux:
+    if max_left_flux >= 0:
         mask = np.zeros(states.shape[0], dtype=bool)
-        for val in left_flux:
+        for val in range(max_left_flux + 1):
             mask |= np.equal(states[:, 0] * (1 - states[:, 1]) + states[:, 2], val)
         states = states[mask]
-    if isinstance(right_flux, int):
-        right_flux = (right_flux,)
-    if right_flux:
+    if max_right_flux >= 0:
         mask = np.zeros(states.shape[0], dtype=bool)
-        for val in right_flux:
+        for val in range(max_right_flux + 1):
             mask |= np.equal((1 - states[:, -3]) * states[:, -2] + states[:, -1], val)
         states = states[mask]
 
@@ -203,15 +51,40 @@ def physical_states(left_flux=None, right_flux=None, num_sites=1, as_multi=False
     return np.sum(states * np.cumprod((1,) + shape[-1:0:-1])[None, ::-1], axis=1)
 
 
-def mass_term(
+def boundary_conditions(
+    num_sites: int,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1
+) -> list[dict[str, int]]:
+    """Helper function to calculate the maximum fluxes at each site."""
+    conditions = [{} for _ in range(num_sites - 1)]
+    if max_left_flux >= 0:
+        for site in range(min(num_sites, BOSON_TRUNC - 1 - max_left_flux)):
+            conditions[site]['max_left_flux'] = max_left_flux + site
+    if max_right_flux >= 0:
+        for site in range(max(0, num_sites - BOSON_TRUNC + 1 + max_right_flux), num_sites - 1):
+            conditions[site]['max_right_flux'] = max_right_flux + (num_sites - site - 1)
+    return conditions
+
+
+def mass_term_site(
     site: int,
     time_step: Number | ParameterExpression,
-    mass_mu: Union[Number, ParameterExpression],
-    qp: Optional[QubitPlacement] = None
-):
-    if qp is None:
-        qp = QubitPlacement([('i', site), ('o', site)])
+    mass_mu: Union[Number, ParameterExpression]
+) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+    r"""Local mass term circuit.
 
+    Mass term is given by
+    $$
+    \begin{align*}
+    H_{M}(r) &= H_{M}^{(1)}(r) + H_{M}^{(2)}(r)\,, \\
+    H_{M}^{(1)}(r) &= \frac{\mu}{2}(-)^{r+1}Z_{i(r)}\,,\\
+    H_{M}^{(2)}(r) &= \frac{\mu}{2}(-)^{r+1}Z_{o(r)}\,
+    \end{align*}
+    $$
+    and has alternating signs depending on the parity of the site number.
+    """
+    qp = QubitPlacement([('i', site), ('o', site)])
     sign = -1 + 2 * (site % 2)
 
     circuit = QuantumCircuit(2)
@@ -221,37 +94,58 @@ def mass_term(
     return circuit, qp, qp
 
 
-def electric_12_term(
+def mass_term(
+    num_sites: int,
+    time_step: Number | ParameterExpression,
+    mass_mu: Union[Number, ParameterExpression],
+    qp: Optional[QubitPlacement]
+) -> QuantumCircuit:
+    """Mass term for the full lattice."""
+    circuit = QuantumCircuit(qp.num_qubits)
+    for site in range(num_sites):
+        circ, init_p, _ = mass_term_site(site, time_step, mass_mu)
+        circuit.compose(circ, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
+    return circuit
+
+
+def electric_12_term_site(
     site: int,
     time_step: Number | ParameterExpression,
-    left_flux: Optional[int | tuple[int, ...]] = None,
-    right_flux: Optional[int | tuple[int, ...]] = None,
-    qp: Optional[QubitPlacement] = None
-):
-    gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, as_multi=True)
+    max_left_flux: int = -1,
+    max_right_flux: int = -1
+) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+    r"""Local first two electric terms.
+
+    First two electric Hamiltonian terms are
+    $$
+    $$
+    \begin{align}
+    H_{E}^{(1)} & = \frac{1}{2}n_{l}(r)\,,
+    \\
+    H_{E}^{(2)} & = \frac{1}{4}n_{l}(r)^{2}\,,
+    \end{align}
+    """
+    gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                                as_multi=True)
     lvals = np.unique(gl_states[:, 2])
     if lvals.shape[0] == 1:
-        if qp is None:
-            qp = QubitPlacement([])
+        qp = QubitPlacement([])
         return QuantumCircuit(0), qp, qp
     if np.amax(lvals) == 1:
-        if qp is None:
-            qp = QubitPlacement([('l', site)])
+        qp = QubitPlacement([('l', site)])
         circuit = QuantumCircuit(1)
         # H_E^(1) + H_E^(2)
         circuit.p(-0.75 * time_step, qp['l'])
         return circuit, qp, qp
 
     if BOSONIC_QUBITS == 'qutrit':
-        if qp is None:
-            qp = QubitPlacement([('d', site)])
+        qp = QubitPlacement([('d', site)])
         circuit = QuantumCircuit(1)
         # H_E^(1) + H_E^(2)
         circuit.append(P1Gate(-0.75 * time_step), [qp['d']])
         circuit.append(P2Gate(-2. * time_step), [qp['d']])
     else:
-        if qp is None:
-            qp = QubitPlacement([(f'd{i}', site) for i in range(BOSONIC_QUBITS)])
+        qp = QubitPlacement([(f'd{i}', site) for i in range(BOSONIC_QUBITS)])
         circuit = QuantumCircuit(BOSONIC_QUBITS)
         # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
         if BOSON_TRUNC == 3 and BOSONIC_QUBITS == 2:
@@ -270,14 +164,34 @@ def electric_12_term(
     return circuit, qp, qp
 
 
-def electric_3f_term(
-    site: int,
+def electric_12_term(
+    num_sites: int,
     time_step: Number | ParameterExpression,
-    qp: Optional[QubitPlacement] = None
-):
+    qp: Optional[QubitPlacement],
+    max_left_flux: int = -1,
+    max_right_flux: int = -1
+) -> QuantumCircuit:
+    """First two electric Hamiltonian for the full lattice.
+
+    Note that the electric Hamiltonian has terms only for sites [0, N-2].
+    """
+    conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
+                                     max_right_flux=max_right_flux)
+
+    circuit = QuantumCircuit(qp.num_qubits)
+    for site in range(num_sites - 1):
+        circ, init_p, _ = electric_12_term(site, time_step, **conditions[site])
+        circuit.compose(circ, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
+    return circuit
+
+
+def electric_3f_term_site(
+    site: int,
+    time_step: Number | ParameterExpression
+) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+    """Fermionic part of the local electric (3) Hamiltonian."""
     # 3/4 * (1 - n_i) * n_o
-    if qp is None:
-        qp = QubitPlacement([('i', site), ('o', site)])
+    qp = QubitPlacement([('i', site), ('o', site)])
     circuit = QuantumCircuit(2)
 
     circuit.x(qp['i'])
@@ -287,34 +201,45 @@ def electric_3f_term(
     return circuit, qp, qp
 
 
-def electric_3b_term(
+def electric_3f_term(
+    num_sites: int,
+    time_step: Number | ParameterExpression,
+    qp: Optional[QubitPlacement]
+) -> QuantumCircuit:
+    circuit = QuantumCircuit(qp.num_qubits)
+    for site in range(num_sites - 1):
+        circ, init_p, _ = electric_3f_term_site(site, time_step)
+        circuit.compose(circ, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
+    return circuit
+
+
+def electric_3b_term_site(
     site: int,
     time_step: Number | ParameterExpression,
-    left_flux: Optional[int | tuple[int, ...]] = None,
-    right_flux: Optional[int | tuple[int, ...]] = None,
-    qp: Optional[QubitPlacement] = None
-):
-    gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, as_multi=True)
+    max_left_flux: int = -1,
+    max_right_flux: int = -1
+) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+    """Fermion-boson part of the local electric (3) Hamiltonian."""
+    gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                                as_multi=True)
     lvals = np.unique(gl_states[:, 2])
     if lvals.shape[0] == 1:
         if lvals[0] == 0:
             qp = QubitPlacement([])
             return QuantumCircuit(0), qp, qp
 
-        if qp is None:
-            qp = QubitPlacement([('i', site), ('o', site)])
+        qp = QubitPlacement([('i', site), ('o', site)])
         circuit = QuantumCircuit(2)
         circuit.x(qp['i'])
         circuit.cp(-0.5 * lvals[0] * time_step, qp['i'], qp['o'])
         circuit.x(qp['i'])
 
     elif np.amax(lvals) == 1:
-        if qp is None:
-            if site % 2 == 0:
-                labels = ['l', 'o', 'i']
-            else:
-                labels = ['i', 'l', 'o']
-            qp = QubitPlacement([(lab, site) for lab in labels])
+        if site % 2 == 0:
+            labels = ['l', 'o', 'i']
+        else:
+            labels = ['i', 'l', 'o']
+        qp = QubitPlacement([(lab, site) for lab in labels])
 
         circuit = QuantumCircuit(qp.num_qubits)
         # 1/2 n_l n_o (1 - n_i)
@@ -326,16 +251,15 @@ def electric_3b_term(
         circuit.compose(parity_network(coeffs * time_step), inplace=True)
 
     else:
-        if qp is None:
-            if site % 2 == 0:
-                labels = ['l', 'o', 'i']
-            else:
-                labels = ['i', 'l', 'o']
-            if BOSONIC_QUBITS == 'qutrit':
-                labels.append('d')
-            else:
-                labels.extend(['d1', 'd0'])
-            qp = QubitPlacement([(lab, site) for lab in labels])
+        if site % 2 == 0:
+            labels = ['l', 'o', 'i']
+        else:
+            labels = ['i', 'l', 'o']
+        if BOSONIC_QUBITS == 'qutrit':
+            labels.append('d')
+        else:
+            labels.extend(['d1', 'd0'])
+        qp = QubitPlacement([(lab, site) for lab in labels])
 
         circuit = QuantumCircuit(qp.num_qubits)
 
@@ -358,7 +282,39 @@ def electric_3b_term(
     return circuit, qp, qp
 
 
-def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
+def electric_3b_term(
+    num_sites: int,
+    time_step: Number | ParameterExpression,
+    qp: Optional[QubitPlacement],
+    max_left_flux: int = -1,
+    max_right_flux: int = -1
+) -> QuantumCircuit:
+    conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
+                                     max_right_flux=max_right_flux)
+
+    circuit = QuantumCircuit(qp.num_qubits)
+    for site in range(num_sites - 1):
+        circ, init_p, _ = electric_3b_term_site(site, time_step, **conditions[site])
+        circuit.compose(circ, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
+    return circuit
+
+
+@dataclass
+class HoppingTermConfig:
+    """Parameters that determine the structure of the hopping term Hamiltonian circuit."""
+    qubit_labels: dict[str, tuple[str, int]]
+    boson_ops: dict[str, tuple[str, str]]
+    default_qp: QubitPlacement
+    gl_states: np.ndarray
+    indices: dict[str, int]
+
+
+def hopping_term_config(
+    term_type: int,
+    site: int,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1
+) -> HoppingTermConfig:
     """Return the x, y, p, q indices and simplifications.
 
     Lattice boundary conditions can impose certain constraints on the available LSH flux from the
@@ -424,8 +380,8 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
 
         indices = {"x'": 4, "x": 3, "y'": 1, "y": 0, "p": 5, "q": 2}
 
-    gl_states = physical_states(left_flux=left_flux, right_flux=right_flux, num_sites=2,
-                                as_multi=True)
+    gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                                num_sites=2, as_multi=True)
     states = gl_states[gl_states[:, indices["x'"]] != gl_states[:, indices["y'"]]]
     states_preproj = states
 
@@ -531,21 +487,23 @@ def hopping_term_config(term_type, site, left_flux=None, right_flux=None):
     return HoppingTermConfig(qubit_labels, boson_ops, default_qp, gl_states, indices)
 
 
-def hopping_term(
-    term_type,
-    site,
-    time_step,
-    interaction_x,
-    left_flux=None,
-    right_flux=None,
-    qp=None,
-    with_barrier=False
+def hopping_term_site(
+    term_type: int,
+    site: int,
+    time_step: Number | ParameterExpression,
+    interaction_x: Number | ParameterExpression,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    with_barrier: bool = False
 ):
-    config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+    """Local hopping term."""
+    config = hopping_term_config(term_type, site, max_left_flux=max_left_flux,
+                                 max_right_flux=max_right_flux)
 
-    usvd_circuit, init_p, final_p = hopping_usvd(term_type, site, config=config, qp=qp)
-    diag_circuit = hopping_diagonal_term(term_type, site, time_step, interaction_x, config=config,
-                                         qp=final_p)[0]
+    usvd_circuit, init_p, final_p = hopping_usvd(term_type, site, config=config)
+    config.default_qp = final_p
+    diag_circuit = hopping_diagonal_term(term_type, site, time_step, interaction_x,
+                                         config=config)[0]
 
     circuit = QuantumCircuit(init_p.num_qubits)
     circuit.compose(usvd_circuit, inplace=True)
@@ -559,16 +517,49 @@ def hopping_term(
     return circuit, init_p, init_p
 
 
+def hopping_term(
+    num_sites: int,
+    site_parity: int,
+    term_type: int,
+    time_step: Number | ParameterExpression,
+    interaction_x: Number | ParameterExpression,
+    qp: QubitPlacement,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    with_barrier: bool = False
+):
+    """Full lattice hopping term for a given site parity (0 or 1) and term type (1 or 2)."""
+    conditions = [{} for _ in range(num_sites)]
+    if max_left_flux >= 0:
+        max_constrained = min(num_sites, BOSON_TRUNC - 1 - max_left_flux)
+        for site in range(site_parity, max_constrained, 2):
+            conditions[site]['max_left_flux'] = max_left_flux + site
+    if max_right_flux >= 0:
+        min_constrained = max(0, num_sites - BOSON_TRUNC + 1 + max_right_flux) + site_parity
+        for site in range(min_constrained, num_sites - 1, 2):
+            conditions[site]['max_right_flux'] = max_right_flux + (num_sites - site - 1)
+
+    circuit = QuantumCircuit(qp.num_qubits)
+
+    for site in range(site_parity, num_sites - 1, 2):
+        circ, init_p, _ = hopping_term_site(term_type, site, time_step, interaction_x,
+                                            with_barrier=with_barrier, **conditions[site])
+        circuit.compose(circ, qubits=[qp[label] for label in init_p.qubit_labels], inplace=True)
+
+    return circuit
+
+
 def hopping_usvd(
-    term_type,
-    site,
-    left_flux=None,
-    right_flux=None,
-    config=None,
-    qp=None
+    term_type: int,
+    site: int,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    config: Optional[HoppingTermConfig] = None,
+    qp: Optional[QubitPlacement] = None
 ):
     if config is None:
-        config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+        config = hopping_term_config(term_type, site, max_left_flux=max_left_flux,
+                                     max_right_flux=max_right_flux)
     if qp is None:
         qp = config.default_qp
     init_p = qp
@@ -670,16 +661,17 @@ def _hopping_usvd_decrementer(circuit, qpl, fermions, boson):
 
 
 def hopping_diagonal_op(
-    term_type,
-    site,
-    left_flux=None,
-    right_flux=None,
-    config=None,
+    term_type: int,
+    site: int,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    config: Optional[HoppingTermConfig] = None
 ):
     """Compute the diagonal term for the given term type and site number as a sum of Pauli products.
     """
     if config is None:
-        config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
+        config = hopping_term_config(term_type, site, max_left_flux=max_left_flux,
+                                     max_right_flux=max_right_flux)
 
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
     states = config.gl_states.copy()
@@ -778,23 +770,21 @@ def hopping_diagonal_op(
 
 
 def hopping_diagonal_term(
-    term_type,
-    site,
-    time_step,
-    interaction_x,
-    left_flux=None,
-    right_flux=None,
-    config=None,
-    qp=None
+    term_type: int,
+    site: int,
+    time_step: Number | ParameterExpression,
+    interaction_x: Number | ParameterExpression,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    config: Optional[HoppingTermConfig] = None
 ):
     """Construct the circuit for the diagonal term.
 
     Using the hopping term config for the given boundary condition, identify the qubits that appear
     in the circuit, compute the Z rotation angles, and compose the parity network circuit.
     """
-    diag_op, op_dims = hopping_diagonal_op(term_type, site,
-                                           left_flux=left_flux, right_flux=right_flux,
-                                           config=config)
+    diag_op, op_dims = hopping_diagonal_op(term_type, site, max_left_flux=max_left_flux,
+                                           max_right_flux=max_right_flux, config=config)
 
     # Multiply the diag_op with the physical parameters (can be Parameters)
     shape = diag_op.shape
@@ -802,9 +792,9 @@ def hopping_diagonal_term(
     diag_op = diag_op.reshape(shape)
 
     if config is None:
-        config = hopping_term_config(term_type, site, left_flux=left_flux, right_flux=right_flux)
-    if qp is None:
-        qp = config.default_qp
+        config = hopping_term_config(term_type, site, max_left_flux=max_left_flux,
+                                     max_right_flux=max_right_flux)
+    qp = config.default_qp
 
     circuit = QuantumCircuit(qp.num_qubits)
 
@@ -846,3 +836,202 @@ def hopping_diagonal_term(
         qp = swap(q1, q2)
 
     return circuit, qp, qp
+
+
+def hamiltonian(
+    num_sites: int,
+    time_step: Number | ParameterExpression,
+    mass_mu: Union[Number, ParameterExpression],
+    interaction_x: Number | ParameterExpression,
+    qp: Optional[QubitPlacement] = None,
+    max_left_flux: int = -1,
+    max_right_flux: int = -1,
+    with_barrier: bool = False,
+    second_order: bool = False
+):
+    if qp is None:
+        labels = []
+        for site in range(num_sites):
+            if site % 2 == 0:
+                labels += [('l', site), ('o', site), ('i', site)]
+            else:
+                labels += [('i', site), ('l', site), ('o', site)]
+        labels += sum(([(f'd{i}', site) for i in range(BOSONIC_QUBITS)]
+                       for site in range(num_sites)), [])
+        qp = QubitPlacement(labels)
+
+    full_circuit = QuantumCircuit(qp.num_qubits)
+
+    def swap(qp, l1, l2):
+        full_circuit.swap(qp[l1], qp[l2])
+        return qp.swap(l1, l2)
+
+    if second_order:
+        dt = time_step * 0.5
+    else:
+        dt = time_step
+
+    # H_M
+    full_circuit.compose(
+        mass_term(num_sites, dt, mass_mu, qp),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_E[1] + H_E[2]
+    full_circuit.compose(
+        electric_12_term(num_sites, dt, qp,
+                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_I[1](r even)
+    full_circuit.compose(
+        hopping_term(num_sites, 0, 1, dt, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_I[2](r odd)
+    full_circuit.compose(
+        hopping_term(num_sites, 1, 2, dt, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_E[3] bosonic
+    full_circuit.compose(
+        electric_3b_term(num_sites, dt, qp,
+                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # THIS IS SPECIFIC TO 4 SITES
+    swap_pairs = [
+        (('i', 1), ('l', 1)),
+        (('i', 3), ('l', 3)),
+        (('o', 0), ('i', 0)),
+        (('i', 1), ('o', 1)),
+        (('l', 1), ('o', 1)),
+        (('o', 2), ('i', 2)),
+        (('i', 3), ('o', 3)),
+        (('l', 3), ('o', 3))
+    ]
+
+    for pair in swap_pairs[:2]:
+        qp = swap(qp, *pair)
+
+    # H_E[3] fermionc
+    full_circuit.compose(
+        electric_3f_term(num_sites, dt, qp),
+        inplace=True
+    )
+
+    for pair in swap_pairs[2:]:
+        qp = swap(qp, *pair)
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_I[1](r odd)
+    full_circuit.compose(
+        hopping_term(num_sites, 1, 1, dt, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_I[2](r even)
+    full_circuit.compose(
+        hopping_term(num_sites, 0, 2, time_step, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    if not second_order:
+        for pair in swap_pairs[::-1]:
+            qp = swap(qp, *pair)
+        return full_circuit, qp
+
+    # H_I[1](r odd)
+    full_circuit.compose(
+        hopping_term(num_sites, 1, 1, dt, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    for pair in swap_pairs[:1:-1]:
+        qp = swap(qp, *pair)
+
+    # H_E[3] fermionc
+    full_circuit.compose(
+        electric_3f_term(num_sites, dt, qp),
+        inplace=True
+    )
+
+    for pair in swap_pairs[1::-1]:
+        qp = swap(qp, *pair)
+
+    # H_E[3] bosonic
+    full_circuit.compose(
+        electric_3b_term(num_sites, dt, qp,
+                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_I[2](r odd)
+    full_circuit.compose(
+        hopping_term(num_sites, 1, 2, dt, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_I[1](r even)
+    full_circuit.compose(
+        hopping_term(num_sites, 0, 1, dt, interaction_x, qp,
+                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                     with_barrier=with_barrier),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_E[1] + H_E[2]
+    full_circuit.compose(
+        electric_12_term(num_sites, dt, qp,
+                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
+        inplace=True
+    )
+    if with_barrier:
+        full_circuit.barrier()
+
+    # H_M
+    full_circuit.compose(
+        mass_term(num_sites, dt, mass_mu, qp),
+        inplace=True
+    )
+
+    return full_circuit, qp
