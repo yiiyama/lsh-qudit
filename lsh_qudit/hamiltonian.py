@@ -7,13 +7,10 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterExpression
 # from qiskit.circuit.library import RCCXGate
 from .set_rccx_inverse import RCCXGate
+from .constants import BOSON_TRUNC, BOSONIC_QUBITS
 from .qutrit_gates import P1Gate, P2Gate, CQGate, CCXminusGate
 from .utils import QubitPlacement, diag_to_iz
 from .parity_network import parity_network
-
-
-BOSON_TRUNC = 3
-BOSONIC_QUBITS = 2
 
 
 def physical_states(

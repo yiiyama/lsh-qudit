@@ -1,8 +1,8 @@
 """Hamiltonian terms and corresponding unitaries represented in numpy matrices."""
-
 import numpy as np
 from .utils import op_matrix
-from .hamiltonian import BOSON_TRUNC, BOSONIC_QUBITS, boundary_conditions
+from .constants import BOSON_TRUNC, BOSONIC_QUBITS
+from .hamiltonian import boundary_conditions
 
 
 def mass_term_site_matrix(
