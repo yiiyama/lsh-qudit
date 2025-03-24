@@ -15,8 +15,8 @@ from .parity_network import parity_network
 
 def physical_states(
     num_sites: int = 1,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     as_multi: bool = False
 ) -> np.ndarray:
     """Returns an array of AGL-satisfying states with optional boundary conditions.
@@ -32,12 +32,12 @@ def physical_states(
         agl_mask &= np.equal((1 - states[:, il + 0]) * states[:, il + 1] + states[:, il + 2],
                              states[:, il + 3] * (1 - states[:, il + 4]) + states[:, il + 5])
     states = states[agl_mask]
-    if max_left_flux >= 0:
+    if max_left_flux < BOSON_TRUNC - 1:
         mask = np.zeros(states.shape[0], dtype=bool)
         for val in range(max_left_flux + 1):
             mask |= np.equal(states[:, 0] * (1 - states[:, 1]) + states[:, 2], val)
         states = states[mask]
-    if max_right_flux >= 0:
+    if max_right_flux < BOSON_TRUNC - 1:
         mask = np.zeros(states.shape[0], dtype=bool)
         for val in range(max_right_flux + 1):
             mask |= np.equal((1 - states[:, -3]) * states[:, -2] + states[:, -1], val)
@@ -50,16 +50,16 @@ def physical_states(
 
 def boundary_conditions(
     num_sites: int,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     num_local: int = 1
 ) -> list[dict[str, int]]:
     """Translate the lattice-wide BC to site-level BCs."""
     conditions = [{} for _ in range(num_sites - num_local + 1)]
-    if max_left_flux >= 0:
+    if max_left_flux < BOSON_TRUNC - 1:
         for lsite in range(min(num_sites, BOSON_TRUNC - 1 - max_left_flux)):
             conditions[lsite]['max_left_flux'] = max_left_flux + lsite
-    if max_right_flux >= 0:
+    if max_right_flux < BOSON_TRUNC - 1:
         for rsite in range(max(0, num_sites - BOSON_TRUNC + 1 + max_right_flux), num_sites):
             conditions[rsite - num_local + 1]['max_right_flux'] = (max_right_flux
                                                                    + (num_sites - rsite - 1))
@@ -110,8 +110,8 @@ def mass_term(
 def electric_12_term_site(
     site: int,
     time_step: Number | ParameterExpression,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
     r"""Local first two electric terms.
 
@@ -167,8 +167,8 @@ def electric_12_term(
     num_sites: int,
     time_step: Number | ParameterExpression,
     qp: Optional[QubitPlacement],
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> QuantumCircuit:
     """First two electric Hamiltonian for the full lattice.
 
@@ -215,8 +215,8 @@ def electric_3f_term(
 def electric_3b_term_site(
     site: int,
     time_step: Number | ParameterExpression,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
     """Fermion-boson part of the local electric (3) Hamiltonian."""
     gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
@@ -285,8 +285,8 @@ def electric_3b_term(
     num_sites: int,
     time_step: Number | ParameterExpression,
     qp: Optional[QubitPlacement],
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> QuantumCircuit:
     conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
                                      max_right_flux=max_right_flux)
@@ -311,8 +311,8 @@ class HoppingTermConfig:
 def hopping_term_config(
     term_type: int,
     site: int,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> HoppingTermConfig:
     """Return the x, y, p, q indices and simplifications.
 
@@ -491,8 +491,8 @@ def hopping_term_site(
     site: int,
     time_step: Number | ParameterExpression,
     interaction_x: Number | ParameterExpression,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False
 ):
     """Local hopping term."""
@@ -523,8 +523,8 @@ def hopping_term(
     time_step: Number | ParameterExpression,
     interaction_x: Number | ParameterExpression,
     qp: QubitPlacement,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False
 ):
     """Full lattice hopping term for a given site parity (0 or 1) and term type (1 or 2)."""
@@ -543,8 +543,8 @@ def hopping_term(
 def hopping_usvd(
     term_type: int,
     site: int,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None,
     qp: Optional[QubitPlacement] = None
 ):
@@ -654,8 +654,8 @@ def _hopping_usvd_decrementer(circuit, qpl, fermions, boson):
 def hopping_diagonal_op(
     term_type: int,
     site: int,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None
 ):
     """Compute the diagonal term for the given term type and site number as a sum of Pauli products.
@@ -765,8 +765,8 @@ def hopping_diagonal_term(
     site: int,
     time_step: Number | ParameterExpression,
     interaction_x: Number | ParameterExpression,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None
 ):
     """Construct the circuit for the diagonal term.
@@ -835,8 +835,8 @@ def hamiltonian(
     mass_mu: Union[Number, ParameterExpression],
     interaction_x: Number | ParameterExpression,
     qp: Optional[QubitPlacement] = None,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False,
     second_order: bool = False
 ):

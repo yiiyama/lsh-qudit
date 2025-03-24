@@ -1,7 +1,8 @@
 """Hamiltonian terms and corresponding unitaries represented in numpy matrices."""
 import numpy as np
 from .utils import op_matrix
-from .constants import BOSON_TRUNC, BOSONIC_QUBITS
+from .constants import (BOSON_TRUNC, BOSONIC_QUBITS, BDIM, cincrp, ocincrp, pauliz, sigmaplus,
+                        sigmaminus)
 from .hamiltonian import boundary_conditions
 
 
@@ -32,8 +33,8 @@ def mass_term_matrix(
 
 def electric_12_term_site_matrix(
     time_step: float,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> np.ndarray:
     nmax, dim = _nl_bounds(max_left_flux, max_right_flux)
 
@@ -49,8 +50,8 @@ def electric_12_term_site_matrix(
 def electric_12_term_matrix(
     num_sites: int,
     time_step: float,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
 ) -> np.ndarray:
     conditions = boundary_conditions(num_sites, max_left_flux, max_right_flux)
@@ -90,8 +91,8 @@ def electric_3f_term_matrix(
 
 def electric_3b_term_site_matrix(
     time_step: float,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> np.ndarray:
     nl_max, nl_dim = _nl_bounds(max_left_flux, max_right_flux)
     if nl_max == 0:
@@ -104,8 +105,8 @@ def electric_3b_term_site_matrix(
 def electric_3b_term_matrix(
     num_sites: int,
     time_step: float,
-    max_left_flux: int = -1,
-    max_right_flux: int = -1,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
 ) -> np.ndarray:
     conditions = boundary_conditions(num_sites, max_left_flux, max_right_flux)
@@ -120,11 +121,57 @@ def electric_3b_term_matrix(
     return mat
 
 
+def hopping_term_site_matrix(
+    term_type: int,
+    time_step: float,
+    interaction_x: float,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
+) -> np.ndarray:
+    nl_max_l, nl_dim_l = _nl_bounds(max_left_flux, max_right_flux + 1)
+    nl_max_r, nl_dim_r = _nl_bounds(max_left_flux + 1, max_right_flux)
+    cincrp_tl = cincrp.reshape((2, BDIM, 2, BDIM))[:, :nl_dim_l, :, :nl_dim_l]
+    cincrp_tl = cincrp_tl.reshape((2 * nl_dim_l, 2 * nl_dim_l))
+    cincrp_tr = cincrp.reshape((2, BDIM, 2, BDIM))[:, :nl_dim_r, :, :nl_dim_r]
+    cincrp_tr = cincrp_tr.reshape((2 * nl_dim_r, 2 * nl_dim_r))
+    ocincrp_tl = ocincrp.reshape((2, BDIM, 2, BDIM))[:, :nl_dim_l, :, :nl_dim_l]
+    ocincrp_tl = ocincrp_tl.reshape((2 * nl_dim_l, 2 * nl_dim_l))
+    ocincrp_tr = ocincrp.reshape((2, BDIM, 2, BDIM))[:, :nl_dim_r, :, :nl_dim_r]
+    ocincrp_tr = ocincrp_tr.reshape((2 * nl_dim_r, 2 * nl_dim_r))
+    nl_l = np.zeros(nl_dim_l)
+    nl_l[:nl_max_l + 1] = np.arange(nl_max_l + 1)
+    diag_fn_l = np.sqrt((nl_l[:, None, None] + np.arange(1, 3)[None, :, None])
+                        / (nl_l[:, None, None] + np.arange(1, 3)[None, None, :]))
+    nl_r = np.zeros(nl_dim_r)
+    nl_r[:nl_max_r + 1] = np.arange(nl_max_r + 1)
+    diag_fn_r = np.sqrt((nl_r[:, None, None] + np.arange(1, 3)[None, :, None])
+                        / (nl_r[:, None, None] + np.arange(1, 3)[None, None, :]))
+    shape = (nl_dim_r, 2, 2, nl_dim_l, 2, 2)
+
+    if term_type == 1:
+        mat = op_matrix(np.diagflat(diag_fn_l), shape, (2, 1, 4))
+        mat = op_matrix(cincrp_tr, shape, (4, 5)) @ mat
+        mat = op_matrix(ocincrp_tl, shape, (1, 2)) @ mat
+        mat = op_matrix(sigmaminus, shape, 3) @ mat
+        mat = op_matrix(pauliz, shape, 1) @ mat
+        mat = op_matrix(sigmaplus, shape, 0) @ mat
+    else:
+        mat = op_matrix(np.diagflat(diag_fn_r), shape, (5, 3, 0))
+        mat = op_matrix(cincrp_tl, shape, (0, 2)) @ mat
+        mat = op_matrix(ocincrp_tr, shape, (3, 5)) @ mat
+        mat = op_matrix(sigmaminus, shape, 1) @ mat
+        mat = op_matrix(pauliz, shape, 3) @ mat
+        mat = op_matrix(sigmaplus, shape, 4) @ mat
+    mat += mat.conjugate().T
+    mat *= interaction_x * time_step
+    return mat
+
+
 def _nl_bounds(max_left_flux, max_right_flux):
     bounds = [BOSON_TRUNC - 1]
-    if max_left_flux >= 0:
+    if max_left_flux < BOSON_TRUNC - 1:
         bounds.append(max_left_flux)
-    if max_right_flux >= 0:
+    if max_right_flux < BOSON_TRUNC - 1:
         bounds.append(max_right_flux)
     nmax = min(bounds)
 
