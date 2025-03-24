@@ -10,7 +10,7 @@ from .utils import QubitPlacement
 
 
 def transpile_lsh_circuit(
-    circuit: QuantumCircuit,
+    circuit: QuantumCircuit | list[QuantumCircuit],
     qp: QubitPlacement,
     backend: Backend
 ) -> QuantumCircuit:
@@ -20,6 +20,8 @@ def transpile_lsh_circuit(
     """
     precompile_pm = lsh_qudit_precompiler()
     precompiled = precompile_pm.run(circuit)
+    if isinstance(precompiled, list):
+        precompiled = max(precompiled, key=lambda c: c.depth())
     layout = layout_heavy_hex(backend, precompiled, qp)
 
     preset_pm = generate_preset_pass_manager(optimization_level=3, backend=backend,
