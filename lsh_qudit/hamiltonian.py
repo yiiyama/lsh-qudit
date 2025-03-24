@@ -54,16 +54,18 @@ def physical_states(
 def boundary_conditions(
     num_sites: int,
     max_left_flux: int = -1,
-    max_right_flux: int = -1
+    max_right_flux: int = -1,
+    num_local: int = 1
 ) -> list[dict[str, int]]:
-    """Helper function to calculate the maximum fluxes at each site."""
-    conditions = [{} for _ in range(num_sites - 1)]
+    """Translate the lattice-wide BC to site-level BCs."""
+    conditions = [{} for _ in range(num_sites - num_local + 1)]
     if max_left_flux >= 0:
-        for site in range(min(num_sites, BOSON_TRUNC - 1 - max_left_flux)):
-            conditions[site]['max_left_flux'] = max_left_flux + site
+        for lsite in range(min(num_sites, BOSON_TRUNC - 1 - max_left_flux)):
+            conditions[lsite]['max_left_flux'] = max_left_flux + lsite
     if max_right_flux >= 0:
-        for site in range(max(0, num_sites - BOSON_TRUNC + 1 + max_right_flux), num_sites - 1):
-            conditions[site]['max_right_flux'] = max_right_flux + (num_sites - site - 1)
+        for rsite in range(max(0, num_sites - BOSON_TRUNC + 1 + max_right_flux), num_sites):
+            conditions[rsite - num_local + 1]['max_right_flux'] = (max_right_flux
+                                                                   + (num_sites - rsite - 1))
     return conditions
 
 
@@ -180,7 +182,7 @@ def electric_12_term(
 
     circuit = QuantumCircuit(qp.num_qubits)
     for site in range(num_sites - 1):
-        circ, init_p, _ = electric_12_term(site, time_step, **conditions[site])
+        circ, init_p, _ = electric_12_term_site(site, time_step, **conditions[site])
         circuit.compose(circ, qubits=[qp[lab] for lab in init_p.qubit_labels], inplace=True)
     return circuit
 
@@ -529,16 +531,8 @@ def hopping_term(
     with_barrier: bool = False
 ):
     """Full lattice hopping term for a given site parity (0 or 1) and term type (1 or 2)."""
-    conditions = [{} for _ in range(num_sites)]
-    if max_left_flux >= 0:
-        max_constrained = min(num_sites, BOSON_TRUNC - 1 - max_left_flux)
-        for site in range(site_parity, max_constrained, 2):
-            conditions[site]['max_left_flux'] = max_left_flux + site
-    if max_right_flux >= 0:
-        min_constrained = max(0, num_sites - BOSON_TRUNC + 1 + max_right_flux) + site_parity
-        for site in range(min_constrained, num_sites - 1, 2):
-            conditions[site]['max_right_flux'] = max_right_flux + (num_sites - site - 1)
-
+    conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
+                                     max_right_flux=max_right_flux, num_local=2)
     circuit = QuantumCircuit(qp.num_qubits)
 
     for site in range(site_parity, num_sites - 1, 2):
