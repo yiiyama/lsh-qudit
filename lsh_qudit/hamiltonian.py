@@ -827,5 +827,3 @@ def hopping_diagonal_term(
         qp = swap(q1, q2)
 
     return circuit, qp, qp
-
-

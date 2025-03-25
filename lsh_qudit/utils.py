@@ -1,5 +1,9 @@
 """Tools."""
+from collections.abc import Sequence
+from functools import partial
 import numpy as np
+import jax
+import jax.numpy as jnp
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import SparsePauliOp
 
@@ -123,7 +127,7 @@ def remove_idle_wires(qc: QuantumCircuit, inplace=False, flatten=False, keep_qub
     return qc
 
 
-def op_matrix(op, shape, qubits, npmod=np):
+def op_matrix(op: np.ndarray, shape: Sequence[int], qubits: int | Sequence[int], npmod=np):
     """Embed a square matrix op into a larger square matrix given by shape. Essentially a series of
     np.krons with identity matrices.
     Args:
@@ -131,6 +135,12 @@ def op_matrix(op, shape, qubits, npmod=np):
         shape: Qudit dimensions from major to minor.
         qubits: Qubit ids (minor=0) to embed the op into.
     """
+    if npmod is jnp:
+        return _op_matrix_jit(op, shape, qubits)  # pylint: disable=not-callable
+    return _op_matrix(op, shape, qubits, npmod)
+
+
+def _op_matrix(op, shape, qubits, npmod):
     shape = tuple(shape)
     if isinstance(qubits, int):
         qubits = (qubits,)
@@ -153,6 +163,10 @@ def op_matrix(op, shape, qubits, npmod=np):
     dest += [2 * full_nq - q - 1 for q in qubits]
     mat = npmod.moveaxis(mat, source, dest).reshape(full_dim, full_dim)
     return mat
+
+
+# pylint: disable-next=invalid-name
+_op_matrix_jit = jax.jit(partial(_op_matrix, npmod=jnp), static_argnums=[1, 2])
 
 
 def clean_array(arr):
