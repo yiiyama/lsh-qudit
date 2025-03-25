@@ -1,7 +1,7 @@
 """Functions to generate circuits for components of the LSH SU(2) Hamiltonian."""
 from dataclasses import dataclass
 from numbers import Number
-from typing import Optional, Union
+from typing import Optional
 import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterExpression
@@ -69,7 +69,7 @@ def boundary_conditions(
 def mass_term_site(
     site: int,
     time_step: Number | ParameterExpression,
-    mass_mu: Union[Number, ParameterExpression]
+    mass_mu: Number | ParameterExpression
 ) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
     r"""Local mass term circuit.
 
@@ -96,7 +96,7 @@ def mass_term_site(
 def mass_term(
     num_sites: int,
     time_step: Number | ParameterExpression,
-    mass_mu: Union[Number, ParameterExpression],
+    mass_mu: Number | ParameterExpression,
     qp: Optional[QubitPlacement]
 ) -> QuantumCircuit:
     """Mass term for the full lattice."""
@@ -829,200 +829,3 @@ def hopping_diagonal_term(
     return circuit, qp, qp
 
 
-def hamiltonian(
-    num_sites: int,
-    time_step: Number | ParameterExpression,
-    mass_mu: Union[Number, ParameterExpression],
-    interaction_x: Number | ParameterExpression,
-    qp: Optional[QubitPlacement] = None,
-    max_left_flux: int = BOSON_TRUNC - 1,
-    max_right_flux: int = BOSON_TRUNC - 1,
-    with_barrier: bool = False,
-    second_order: bool = False
-):
-    if qp is None:
-        labels = []
-        for site in range(num_sites):
-            if site % 2 == 0:
-                labels += [('l', site), ('o', site), ('i', site)]
-            else:
-                labels += [('i', site), ('l', site), ('o', site)]
-        labels += sum(([(f'd{i}', site) for i in range(BOSONIC_QUBITS)]
-                       for site in range(num_sites)), [])
-        qp = QubitPlacement(labels)
-
-    full_circuit = QuantumCircuit(qp.num_qubits)
-
-    def swap(qp, l1, l2):
-        full_circuit.swap(qp[l1], qp[l2])
-        return qp.swap(l1, l2)
-
-    if second_order:
-        dt = time_step * 0.5
-    else:
-        dt = time_step
-
-    # H_M
-    full_circuit.compose(
-        mass_term(num_sites, dt, mass_mu, qp),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_E[1] + H_E[2]
-    full_circuit.compose(
-        electric_12_term(num_sites, dt, qp,
-                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_I[1](r even)
-    full_circuit.compose(
-        hopping_term(num_sites, 0, 1, dt, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_I[2](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 2, dt, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_E[3] bosonic
-    full_circuit.compose(
-        electric_3b_term(num_sites, dt, qp,
-                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # THIS IS SPECIFIC TO 4 SITES
-    swap_pairs = [
-        (('i', 1), ('l', 1)),
-        (('i', 3), ('l', 3)),
-        (('o', 0), ('i', 0)),
-        (('i', 1), ('o', 1)),
-        (('l', 1), ('o', 1)),
-        (('o', 2), ('i', 2)),
-        (('i', 3), ('o', 3)),
-        (('l', 3), ('o', 3))
-    ]
-
-    for pair in swap_pairs[:2]:
-        qp = swap(qp, *pair)
-
-    # H_E[3] fermionc
-    full_circuit.compose(
-        electric_3f_term(num_sites, dt, qp),
-        inplace=True
-    )
-
-    for pair in swap_pairs[2:]:
-        qp = swap(qp, *pair)
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_I[1](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 1, dt, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_I[2](r even)
-    full_circuit.compose(
-        hopping_term(num_sites, 0, 2, time_step, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    if not second_order:
-        for pair in swap_pairs[::-1]:
-            qp = swap(qp, *pair)
-        return full_circuit, qp
-
-    # H_I[1](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 1, dt, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    for pair in swap_pairs[:1:-1]:
-        qp = swap(qp, *pair)
-
-    # H_E[3] fermionc
-    full_circuit.compose(
-        electric_3f_term(num_sites, dt, qp),
-        inplace=True
-    )
-
-    for pair in swap_pairs[1::-1]:
-        qp = swap(qp, *pair)
-
-    # H_E[3] bosonic
-    full_circuit.compose(
-        electric_3b_term(num_sites, dt, qp,
-                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_I[2](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 2, dt, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_I[1](r even)
-    full_circuit.compose(
-        hopping_term(num_sites, 0, 1, dt, interaction_x, qp,
-                     max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_E[1] + H_E[2]
-    full_circuit.compose(
-        electric_12_term(num_sites, dt, qp,
-                         max_left_flux=max_left_flux, max_right_flux=max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
-    # H_M
-    full_circuit.compose(
-        mass_term(num_sites, dt, mass_mu, qp),
-        inplace=True
-    )
-
-    return full_circuit, qp
