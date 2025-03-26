@@ -1,6 +1,7 @@
 """Postcompiler pass to perform additional gate cancellations."""
+import numpy as np
 from qiskit.circuit import QuantumRegister
-from qiskit.circuit.library import XGate, ZGate
+from qiskit.circuit.library import XGate, RZGate
 from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler import TransformationPass
 
@@ -31,7 +32,7 @@ class LSHPostcompiler(TransformationPass):
                     subdag = DAGCircuit()
                     qreg = QuantumRegister(2)
                     subdag.add_qreg(qreg)
-                    subdag.apply_operation_back(ZGate(), [qreg[1 - ix]])
+                    subdag.apply_operation_back(RZGate(np.pi), [qreg[1 - ix]])
                     dag.substitute_node_with_dag(node, subdag)
                     break
                 elif node.op.name == 'cx':
