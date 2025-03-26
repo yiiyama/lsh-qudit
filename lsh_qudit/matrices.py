@@ -13,32 +13,30 @@ from .hamiltonian import boundary_conditions
 
 def mass_site_hamiltonian(
     site: int,
-    time_step: Number,
     mass_mu: Number,
     npmod=np
 ) -> np.ndarray:
     op = np.array([1., -1.]) * (-1 + 2 * (site % 2))
     diags = op[:, None] + op[None, :]
-    return npmod.diagflat(diags).astype(np.complex128) * mass_mu / 2. * time_step
+    return npmod.diagflat(diags).astype(np.complex128) * mass_mu / 2.
 
 
 def mass_hamiltonian(
     num_sites: int,
-    time_step: Number,
     mass_mu: Number,
     npmod=np
 ) -> np.ndarray:
     if npmod is jnp:
-        return _mass_hamiltonian_jit(num_sites, time_step, mass_mu)
-    return _mass_hamiltonian(num_sites, time_step, mass_mu, npmod)
+        return _mass_hamiltonian_jit(num_sites, mass_mu)
+    return _mass_hamiltonian(num_sites, mass_mu, npmod)
 
 
-def _mass_hamiltonian(num_sites, time_step, mass_mu, npmod):
+def _mass_hamiltonian(num_sites, mass_mu, npmod):
     shape = (2,) * (2 * num_sites)
     dim = np.prod(shape)
     mat = npmod.zeros((dim, dim), dtype=np.complex128)
     for site in range(num_sites):
-        mat += op_matrix(mass_site_hamiltonian(site, time_step, mass_mu, npmod=npmod), shape,
+        mat += op_matrix(mass_site_hamiltonian(site, mass_mu, npmod=npmod), shape,
                          (2 * site + 1, 2 * site), npmod=npmod)
     return mat
 
@@ -47,7 +45,6 @@ _mass_hamiltonian_jit = jax.jit(partial(_mass_hamiltonian, npmod=jnp), static_ar
 
 
 def electric_12_site_hamiltonian(
-    time_step: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
@@ -60,25 +57,24 @@ def electric_12_site_hamiltonian(
     nl = np.arange(dim)
     nl[nmax + 1:] = 0
     diags = (nl / 2. + nl * nl / 4.)
-    return npmod.diagflat(diags).astype(np.complex128) * time_step
+    return npmod.diagflat(diags).astype(np.complex128)
 
 
 def electric_12_hamiltonian(
     num_sites: int,
-    time_step: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
 ) -> np.ndarray:
     if npmod is jnp:
-        return _electric_12_hamiltonian_jit(num_sites, time_step, max_left_flux, max_right_flux)
-    return _electric_12_hamiltonian(num_sites, time_step, max_left_flux, max_right_flux, npmod)
+        return _electric_12_hamiltonian_jit(num_sites, max_left_flux, max_right_flux)
+    return _electric_12_hamiltonian(num_sites, max_left_flux, max_right_flux, npmod)
 
 
-def _electric_12_hamiltonian(num_sites, time_step, max_left_flux, max_right_flux, npmod):
+def _electric_12_hamiltonian(num_sites, max_left_flux, max_right_flux, npmod):
     conditions = boundary_conditions(num_sites, max_left_flux, max_right_flux)
     site_matrices = [
-        electric_12_site_hamiltonian(time_step, npmod=npmod, **bc) for bc in conditions[:-1]
+        electric_12_site_hamiltonian(npmod=npmod, **bc) for bc in conditions[:-1]
     ]
     shape = tuple(m.shape[0] for m in site_matrices[::-1])
     dim = np.prod(shape)
@@ -89,35 +85,33 @@ def _electric_12_hamiltonian(num_sites, time_step, max_left_flux, max_right_flux
 
 
 _electric_12_hamiltonian_jit = jax.jit(partial(_electric_12_hamiltonian, npmod=jnp),
-                                       static_argnums=[0, 2, 3])
+                                       static_argnums=[0, 1, 2])
 
 
 def electric_3f_site_hamiltonian(
-    time_step: Number,
     npmod=np
 ) -> np.ndarray:
     # 3/4 * (1 - n_i) * n_o
     nop = npmod.arange(2)
     diags = 0.75 * (1 - nop[None, :]) * nop[:, None]
-    return npmod.diagflat(diags) * time_step
+    return npmod.diagflat(diags)
 
 
 def electric_3f_hamiltonian(
     num_sites: int,
-    time_step: Number,
     npmod=np
 ) -> np.ndarray:
     if npmod is jnp:
-        return _electric_3f_hamiltonian_jit(num_sites, time_step)
-    return _electric_3f_hamiltonian(num_sites, time_step, npmod)
+        return _electric_3f_hamiltonian_jit(num_sites)
+    return _electric_3f_hamiltonian(num_sites, npmod)
 
 
-def _electric_3f_hamiltonian(num_sites, time_step, npmod):
+def _electric_3f_hamiltonian(num_sites, npmod):
     shape = (2,) * (2 * (num_sites - 1))
     dim = np.prod(shape)
     mat = npmod.zeros((dim, dim), dtype=np.complex128)
     for site in range(num_sites - 1):
-        mat += op_matrix(electric_3f_site_hamiltonian(time_step, npmod=npmod), shape,
+        mat += op_matrix(electric_3f_site_hamiltonian(npmod=npmod), shape,
                          (2 * site + 1, 2 * site), npmod=npmod)
     return mat
 
@@ -127,7 +121,6 @@ _electric_3f_hamiltonian_jit = jax.jit(partial(_electric_3f_hamiltonian, npmod=j
 
 
 def electric_3b_site_hamiltonian(
-    time_step: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
@@ -137,25 +130,24 @@ def electric_3b_site_hamiltonian(
         return npmod.zeros((1, 1), dtype=np.complex128)
     diags = np.zeros((nl_dim, 2, 2), dtype=np.complex128)
     diags[:nl_max + 1, 1, 0] = np.arange(nl_max + 1)
-    return npmod.diagflat(diags) * 0.5 * time_step
+    return npmod.diagflat(diags) * 0.5
 
 
 def electric_3b_hamiltonian(
     num_sites: int,
-    time_step: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
 ) -> np.ndarray:
     if npmod is jnp:
-        return _electric_3b_hamiltonian_jit(num_sites, time_step, max_left_flux, max_right_flux)
-    return _electric_3b_hamiltonian(num_sites, time_step, max_left_flux, max_right_flux, npmod)
+        return _electric_3b_hamiltonian_jit(num_sites, max_left_flux, max_right_flux)
+    return _electric_3b_hamiltonian(num_sites, max_left_flux, max_right_flux, npmod)
 
 
-def _electric_3b_hamiltonian(num_sites, time_step, max_left_flux, max_right_flux, npmod):
+def _electric_3b_hamiltonian(num_sites, max_left_flux, max_right_flux, npmod):
     conditions = boundary_conditions(num_sites, max_left_flux, max_right_flux)
     site_matrices = [
-        electric_3b_site_hamiltonian(time_step, npmod=npmod, **bc) for bc in conditions[:-1]
+        electric_3b_site_hamiltonian(npmod=npmod, **bc) for bc in conditions[:-1]
     ]
     shape = tuple(m.shape[0] for m in site_matrices[::-1])
     dim = np.prod(shape)
@@ -166,12 +158,11 @@ def _electric_3b_hamiltonian(num_sites, time_step, max_left_flux, max_right_flux
 
 
 _electric_3b_hamiltonian_jit = jax.jit(partial(_electric_3b_hamiltonian, npmod=jnp),
-                                       static_argnums=[0, 2, 3])
+                                       static_argnums=[0, 1, 2])
 
 
 def hopping_site_hamiltonian(
     term_type: int,
-    time_step: Number,
     interaction_x: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
@@ -212,7 +203,7 @@ def hopping_site_hamiltonian(
         mat = op_matrix(pauliz, shape, 3, npmod=npmod) @ mat
         mat = op_matrix(sigmaplus, shape, 4, npmod=npmod) @ mat
     mat += mat.conjugate().T
-    mat *= interaction_x * time_step
+    mat *= interaction_x
     return mat
 
 
@@ -220,24 +211,23 @@ def hopping_hamiltonian(
     num_sites: int,
     site_parity: int,
     term_type: int,
-    time_step: Number,
     interaction_x: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     npmod=np
 ) -> np.ndarray:
     if npmod is jnp:
-        return _hopping_hamiltonian_jit(num_sites, site_parity, term_type, time_step, interaction_x,
+        return _hopping_hamiltonian_jit(num_sites, site_parity, term_type, interaction_x,
                                         max_left_flux, max_right_flux)
-    return _hopping_hamiltonian(num_sites, site_parity, term_type, time_step, interaction_x,
+    return _hopping_hamiltonian(num_sites, site_parity, term_type, interaction_x,
                                 max_left_flux, max_right_flux, npmod)
 
 
-def _hopping_hamiltonian(num_sites, site_parity, term_type, time_step, interaction_x,
+def _hopping_hamiltonian(num_sites, site_parity, term_type, interaction_x,
                          max_left_flux, max_right_flux, npmod):
     conditions = boundary_conditions(num_sites, max_left_flux, max_right_flux, num_local=2)
     site_matrices = [
-        hopping_site_hamiltonian(term_type, time_step, interaction_x, npmod=npmod,
+        hopping_site_hamiltonian(term_type, interaction_x, npmod=npmod,
                                  **conditions[site])
         for site in range(site_parity, num_sites - 1, 2)
     ]
@@ -250,12 +240,11 @@ def _hopping_hamiltonian(num_sites, site_parity, term_type, time_step, interacti
 
 
 _hopping_hamiltonian_jit = jax.jit(partial(_hopping_hamiltonian, npmod=jnp),
-                                   static_argnums=[0, 1, 2, 5, 6])
+                                   static_argnums=[0, 1, 2, 4, 5])
 
 
 def hamiltonian(
     num_sites: int,
-    time_step: Number,
     mass_mu: Number,
     interaction_x: Number,
     max_left_flux: int = BOSON_TRUNC - 1,
@@ -263,14 +252,11 @@ def hamiltonian(
     npmod=np
 ) -> np.ndarray:
     if npmod is jnp:
-        return _hamiltonian_jit(num_sites, time_step, mass_mu, interaction_x, max_left_flux,
-                                max_right_flux)
-    return _hamiltonian(num_sites, time_step, mass_mu, interaction_x, max_left_flux, max_right_flux,
-                        npmod)
+        return _hamiltonian_jit(num_sites, mass_mu, interaction_x, max_left_flux, max_right_flux)
+    return _hamiltonian(num_sites, mass_mu, interaction_x, max_left_flux, max_right_flux, npmod)
 
 
-def _hamiltonian(num_sites, time_step, mass_mu, interaction_x, max_left_flux, max_right_flux,
-                 npmod):
+def _hamiltonian(num_sites, mass_mu, interaction_x, max_left_flux, max_right_flux, npmod):
     conditions = boundary_conditions(num_sites, max_left_flux, max_right_flux)
     shape = ()
     for bc in conditions:
@@ -280,12 +266,12 @@ def _hamiltonian(num_sites, time_step, mass_mu, interaction_x, max_left_flux, ma
     hmat = npmod.zeros((dim, dim), dtype=np.complex128)
 
     # HM
-    hmat_local = mass_hamiltonian(num_sites, time_step, mass_mu, npmod=npmod)
+    hmat_local = mass_hamiltonian(num_sites, mass_mu, npmod=npmod)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites))[::-1]), ())
     hmat += op_matrix(hmat_local, shape, subsystems, npmod=npmod)
 
     # HE[12]
-    hmat_local = electric_12_hamiltonian(num_sites, time_step,
+    hmat_local = electric_12_hamiltonian(num_sites,
                                          max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                          npmod=npmod)
     subsystems_r = ()
@@ -295,7 +281,7 @@ def _hamiltonian(num_sites, time_step, mass_mu, interaction_x, max_left_flux, ma
     hmat += op_matrix(hmat_local, shape, subsystems_r[::-1], npmod=npmod)
 
     # HE[3]
-    hmat_local = electric_3b_hamiltonian(num_sites, time_step, max_left_flux=max_left_flux,
+    hmat_local = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
                                          max_right_flux=max_right_flux, npmod=npmod)
     subsystems_r = ()
     for site in range(num_sites - 1):
@@ -303,20 +289,20 @@ def _hamiltonian(num_sites, time_step, mass_mu, interaction_x, max_left_flux, ma
             subsystems_r += tuple(range(3 * site, 3 * (site + 1)))
     hmat += op_matrix(hmat_local, shape, subsystems_r[::-1], npmod=npmod)
 
-    hmat_local = electric_3f_hamiltonian(num_sites, time_step, npmod=npmod)
+    hmat_local = electric_3f_hamiltonian(num_sites, npmod=npmod)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites - 1))[::-1]), ())
     hmat += op_matrix(hmat_local, shape, subsystems, npmod=npmod)
 
     # HI(r even)
     for term_type in [1, 2]:
-        hmat_local = hopping_hamiltonian(num_sites, 0, term_type, time_step, interaction_x,
+        hmat_local = hopping_hamiltonian(num_sites, 0, term_type, interaction_x,
                                          max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                          npmod=npmod)
         hmat += hmat_local
 
     # HI(r odd)
     for term_type in [1, 2]:
-        hmat_local = hopping_hamiltonian(num_sites, 1, term_type, time_step, interaction_x,
+        hmat_local = hopping_hamiltonian(num_sites, 1, term_type, interaction_x,
                                          max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                          npmod=npmod)
         subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
@@ -325,7 +311,7 @@ def _hamiltonian(num_sites, time_step, mass_mu, interaction_x, max_left_flux, ma
     return hmat
 
 
-_hamiltonian_jit = jax.jit(partial(_hamiltonian, npmod=jnp), static_argnums=[0, 4, 5])
+_hamiltonian_jit = jax.jit(partial(_hamiltonian, npmod=jnp), static_argnums=[0, 3, 4])
 
 
 def nl_bounds(

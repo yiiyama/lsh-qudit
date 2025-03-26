@@ -241,16 +241,16 @@ def trotter_step_unitary(
         dt = time_step
 
     # HM
-    hmat = mass_hamiltonian(num_sites, dt, mass_mu, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    hmat = mass_hamiltonian(num_sites, mass_mu, npmod=npmod)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites))[::-1]), ())
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HE[12]
-    hmat = electric_12_hamiltonian(num_sites, dt,
+    hmat = electric_12_hamiltonian(num_sites,
                                    max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                    npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems_r = ()
     for site in range(num_sites - 1):
         if shape[::-1][3 * site + 2] != 1:
@@ -258,94 +258,94 @@ def trotter_step_unitary(
     umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
 
     # HI[1](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 1, dt, interaction_x,
+    hmat = hopping_hamiltonian(num_sites, 0, 1, interaction_x,
                                max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     umat = umat_local @ umat
 
     # HI[2](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 2, dt, interaction_x,
+    hmat = hopping_hamiltonian(num_sites, 1, 2, interaction_x,
                                max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HE[3]
-    hmat = electric_3b_hamiltonian(num_sites, dt, max_left_flux=max_left_flux,
+    hmat = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
                                    max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems_r = ()
     for site in range(num_sites - 1):
         if shape[::-1][3 * site + 2] != 1:
             subsystems_r += tuple(range(3 * site, 3 * (site + 1)))
     umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
 
-    hmat = electric_3f_hamiltonian(num_sites, dt, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    hmat = electric_3f_hamiltonian(num_sites, npmod=npmod)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites - 1))[::-1]), ())
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HI[1](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 1, dt, interaction_x, max_left_flux=max_left_flux,
+    hmat = hopping_hamiltonian(num_sites, 1, 1, interaction_x, max_left_flux=max_left_flux,
                                max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HI[2](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 2, time_step, interaction_x,
+    hmat = hopping_hamiltonian(num_sites, 0, 2, interaction_x,
                                max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * time_step)
     umat = umat_local @ umat
 
     if not second_order:
         return umat
 
     # HI[1](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 1, dt, interaction_x, max_left_flux=max_left_flux,
+    hmat = hopping_hamiltonian(num_sites, 1, 1, interaction_x, max_left_flux=max_left_flux,
                                max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HE[3]
-    hmat = electric_3b_hamiltonian(num_sites, dt, max_left_flux=max_left_flux,
+    hmat = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
                                    max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems_r = ()
     for site in range(num_sites - 1):
         if shape[::-1][3 * site + 2] != 1:
             subsystems_r += tuple(range(3 * site, 3 * (site + 1)))
     umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
 
-    hmat = electric_3f_hamiltonian(num_sites, dt, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    hmat = electric_3f_hamiltonian(num_sites, npmod=npmod)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites - 1))[::-1]), ())
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HI[2](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 2, dt, interaction_x,
+    hmat = hopping_hamiltonian(num_sites, 1, 2, interaction_x,
                                max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
     # HI[1](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 1, dt, interaction_x,
+    hmat = hopping_hamiltonian(num_sites, 0, 1, interaction_x,
                                max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     umat = umat_local @ umat
 
     # HE[12]
-    hmat = electric_12_hamiltonian(num_sites, dt,
+    hmat = electric_12_hamiltonian(num_sites,
                                    max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                    npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems_r = ()
     for site in range(num_sites - 1):
         if shape[::-1][3 * site + 2] != 1:
@@ -353,8 +353,8 @@ def trotter_step_unitary(
     umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
 
     # HM
-    hmat = mass_hamiltonian(num_sites, dt, mass_mu, npmod=npmod)
-    umat_local = expm(-1.j * hmat)
+    hmat = mass_hamiltonian(num_sites, mass_mu, npmod=npmod)
+    umat_local = expm(-1.j * hmat * dt)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites))[::-1]), ())
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
