@@ -828,7 +828,7 @@ def hopping_diagonal_term(
     if all(d == 2 for d in diag_op.shape):
         circ = parity_network(diag_to_iz(diag_op))
     else:
-        pass
+        raise NotImplementedError('Qudit diagonal circuit')
     circuit.compose(circ, qubits=[qpl(lab) for lab in ord_op_dims[::-1]], inplace=True)
     for q1, q2 in swaps[::-1]:
         qp = swap(q1, q2)
