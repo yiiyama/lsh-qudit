@@ -30,11 +30,9 @@ class QutritGate(Gate):
         name: str,
         as_qutrit: tuple[bool, ...],
         params: list[ParameterValueType],
-        label: Optional[str] = None,
-        duration: Optional[int] = None,
-        unit: str = 'dt'
+        label: Optional[str] = None
     ):
-        super().__init__(name, len(as_qutrit), params, label=label, duration=duration, unit=unit)
+        super().__init__(name, len(as_qutrit), params, label=label)
         self.as_qutrit = as_qutrit
 
 
@@ -57,14 +55,14 @@ class QutritCompositeGate(QutritGate):
 class StaticProperties:
     """Mixin for qutrit gates with properties defined at class level. Copies of the properties will
     be set on instances through __init__()."""
-    def __init__(self, params, *args, label=None, duration=None, unit='dt', **kwargs):
+    def __init__(self, params, *args, label=None, **kwargs):
         if params is None:
             params = []
         else:
             params = list(params)
         # pylint: disable=no-member
         super().__init__(self.__class__.gate_name, self.__class__.as_qutrit, params, *args,
-                         label=label, duration=duration, unit=unit, **kwargs)
+                         label=label, **kwargs)
 
 
 class OneQutritPulseGate(StaticProperties, QutritPulseGate):
@@ -463,11 +461,9 @@ class RCRGate(Gate):
     def __init__(
         self,
         params: list[ParameterValueType],
-        label: Optional[str] = None,
-        duration: Optional[int] = None,
-        unit: str = 'dt'
+        label: Optional[str] = None
     ):
-        super().__init__('rcr', 2, params, label=label, duration=duration, unit=unit)
+        super().__init__('rcr', 2, params, label=label)
 
 
 class CRCRGate(QutritQubitCompositeGate):
