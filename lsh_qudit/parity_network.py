@@ -58,7 +58,7 @@ def is_zero(angle):
     try:
         return np.isclose(angle, 0.)
     except TypeError:
-        return angle.sympify() == 0
+        return bool(angle.sympify().is_zero)
 
 
 def parity_network(
