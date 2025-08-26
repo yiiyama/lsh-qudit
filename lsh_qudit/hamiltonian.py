@@ -117,17 +117,18 @@ def electric_12_term_site(
 
     First two electric Hamiltonian terms are
     $$
-    $$
     \begin{align}
     H_{E}^{(1)} & = \frac{1}{2}n_{l}(r)\,,
     \\
     H_{E}^{(2)} & = \frac{1}{4}n_{l}(r)^{2}\,,
     \end{align}
+    $$
     """
     gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                 as_multi=True)
     lvals = np.unique(gl_states[:, 2])
     if lvals.shape[0] == 1:
+        # No n_l DOF -> H_E(1) and (2) are constants
         qp = QubitPlacement([])
         return QuantumCircuit(0), qp, qp
     if np.amax(lvals) == 1:
@@ -321,7 +322,7 @@ def hopping_term_config(
     reductions of the matrix elements.
 
     To check for simplifications, we first identify the physical states (satisfying the Gauss's law
-    and the boundary conditions) with non-coinciding n_i(r) and n_i(r+1). Then, within the list of
+    and the boundary conditions) with non-coincident n_i(r) and n_i(r+1). Then, within the list of
     such states,
 
     - If n_l(r) is 0 or 1 with n_o(r)=0, n_l(r)=1 occurring only when n_i(r+1)=1, the decrementer is
@@ -801,27 +802,33 @@ def hopping_diagonal_term(
 
     # Final QP of Usvd
     # (1, 0): ["p", "x", "y'", "x'", "q", "y"]
-    # (1, 1): ["x", "p", "y'", "x'", "q", "y"]
+    # (1, 1): ["x", "p", "y'", "x'", "q", "y"] -> q displaced by +1
     # (2, 0): ["q", "y", "x'", "y'", "p", "x"]
-    # (2, 1): ["y", "q", "x'", "y'", "p", "x"]
-    match (term_type, site % 2, config.boson_ops["p"][1], config.boson_ops["q"][1]):
-        case (1, 0, 'id', 'zero'):
+    # (2, 1): ["y", "q", "x'", "y'", "p", "x"] -> p displaced by +1
+    match (term_type, site % 2):
+        case (1, 0) | (2, 0):
             swaps = []
-        case (1, 1, 'zero', 'id'):
-            swaps = [("q", "y")]
-        case (2, 0, 'zero', 'id'):
-            swaps = []
-        case (2, 1, 'id', 'zero'):
-            swaps = [("p", "x")]
-        case _:
-            raise NotImplementedError('General diagonal term not implemented')
+        case (1, 1):
+            if config.boson_ops['q'][1] == 'id':
+                swaps = [("q", "y")]
+            else:
+                swaps = [("q", "x'")]
+        case (2, 1):
+            if config.boson_ops['p'][1] == 'id':
+                swaps = [("p", "x")]
+            else:
+                swaps = [("p", "y'")]
 
     for q1, q2 in swaps:
         qp = swap(q1, q2)
     # Permute the axis of diag_ops to match the QP order
     ord_op_dims = [reverse_map[lab] for lab in qp.qubit_labels[::-1] if reverse_map[lab] in op_dims]
     perm = tuple(op_dims.index(lab) for lab in ord_op_dims)
-    circ = parity_network(diag_to_iz(diag_op.transpose(perm)))
+    diag_op = diag_op.transpose(perm)
+    if all(d == 2 for d in diag_op.shape):
+        circ = parity_network(diag_to_iz(diag_op))
+    else:
+        pass
     circuit.compose(circ, qubits=[qpl(lab) for lab in ord_op_dims[::-1]], inplace=True)
     for q1, q2 in swaps[::-1]:
         qp = swap(q1, q2)
