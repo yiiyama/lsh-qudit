@@ -4,6 +4,7 @@ from numbers import Number
 from typing import Optional
 import numpy as np
 from qiskit.circuit import ParameterExpression, QuantumCircuit, QuantumRegister, Qubit
+from qiskit.circuit.library import Barrier
 from .set_rccx_inverse import RCCXGate
 from .constants import BOSON_TRUNC, BOSONIC_QUBITS
 from .agl import physical_states, boundary_conditions
@@ -41,6 +42,8 @@ def prune_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
     """Drop unused qubits from the circuit and rename the registers."""
     used_qubits = set()
     for inst in circuit.data:
+        if inst.operation.name == 'barrier':
+            continue
         used_qubits |= set(inst.qubits)
     names_qubits = []
     for qubit in used_qubits:
@@ -51,8 +54,13 @@ def prune_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
     qubit_to_reg = dict((nq[2], reg) for nq, reg in zip(names_qubits, qregs))
     pruned = QuantumCircuit(*qregs)
     for inst in circuit.data:
-        qargs = [qubit_to_reg[qubit][0] for qubit in inst.qubits]
-        pruned.append(inst.operation, qargs=qargs)
+        if inst.operation.name == 'barrier':
+            operation = Barrier(len(qregs))
+            qargs = [qreg[0] for qreg in qregs]
+        else:
+            operation = inst.operation
+            qargs = [qubit_to_reg[qubit][0] for qubit in inst.qubits]
+        pruned.append(operation, qargs=qargs)
     return pruned
 
 
@@ -271,8 +279,8 @@ class HoppingTermConfig:
 
 def hopping_term_config(
     term_type: int,
-    max_left_flux: int,
-    max_right_flux: int
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1
 ) -> HoppingTermConfig:
     """Return the x, y, p, q indices and simplifications.
 
