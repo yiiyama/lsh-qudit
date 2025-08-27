@@ -7,13 +7,13 @@ from qiskit.circuit import ParameterExpression, QuantumCircuit, QuantumRegister,
 from .set_rccx_inverse import RCCXGate
 from .constants import BOSON_TRUNC, BOSONIC_QUBITS
 from .agl import physical_states, boundary_conditions
-from .utils import QubitPlacement, diag_to_iz
+from .utils import diag_to_iz
 from .parity_network import parity_network
 
 REG_NAMES = ['i', 'o', 'a'] + [f'l{i}' for i in range(BOSONIC_QUBITS)]
 
 
-def make_circuit(num_sites: int, *reg_names):
+def make_circuit(num_sites: int, *reg_names) -> tuple[QuantumCircuit, dict[str, QuantumRegister]]:
     """Helper function to construct a circuit with named qubits."""
     if not reg_names:
         reg_names = REG_NAMES
@@ -35,14 +35,32 @@ def embed_site_circuit(
         reg, idx = site_circ.find_bit(qubit).registers[0]
         qubit_mapping.append(full_regs[reg.name][sites[idx]])
     full_circ.compose(site_circ, qubits=qubit_mapping, inplace=True)
-    return full_circ
+
+
+def prune_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
+    """Drop unused qubits from the circuit and rename the registers."""
+    used_qubits = set()
+    for inst in circuit.data:
+        used_qubits |= set(inst.qubits)
+    names_qubits = []
+    for qubit in used_qubits:
+        reg, idx = circuit.find_bit(qubit).registers[0]
+        names_qubits.append((reg.name, idx, qubit))
+    names_qubits = sorted(names_qubits, key=lambda x: (x[1], REG_NAMES.index(x[0])))
+    qregs = [QuantumRegister(1, f'{name}.{isite}') for name, isite, _ in names_qubits]
+    qubit_to_reg = dict((nq[2], reg) for nq, reg in zip(names_qubits, qregs))
+    pruned = QuantumCircuit(*qregs)
+    for inst in circuit.data:
+        qargs = [qubit_to_reg[qubit][0] for qubit in inst.qubits]
+        pruned.append(inst.operation, qargs=qargs)
+    return pruned
 
 
 def mass_term_site(
     parity: int,
     mass_mu: Number | ParameterExpression,
     time_step: Number | ParameterExpression
-) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+) -> QuantumCircuit:
     r"""Local mass term circuit.
 
     Mass term is given by
@@ -56,7 +74,7 @@ def mass_term_site(
     and has alternating signs depending on the parity of the site number.
     """
     sign = -1 + 2 * parity
-    circuit, regs = make_circuit(1, 'i', 'o')
+    circuit, regs = make_circuit(1)
     circuit.rz(sign * mass_mu * time_step, regs['i'])
     circuit.rz(sign * mass_mu * time_step, regs['o'])
     return circuit
@@ -68,7 +86,7 @@ def mass_term(
     time_step: Number | ParameterExpression
 ) -> QuantumCircuit:
     """Mass term for the full lattice."""
-    circuit, _ = make_circuit(num_sites, 'i', 'o')
+    circuit, _ = make_circuit(num_sites)
     for isite in range(num_sites):
         site_circ = mass_term_site(isite % 2, mass_mu, time_step)
         embed_site_circuit(circuit, site_circ, isite)
@@ -80,7 +98,7 @@ def electric_12_term_site(
     time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1
-) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+) -> QuantumCircuit:
     r"""Local first two electric terms.
 
     First two electric Hamiltonian terms are
@@ -92,6 +110,7 @@ def electric_12_term_site(
     \end{align}
     $$
     """
+    circuit, regs = make_circuit(1)
     gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                 as_multi=True)
     lvals = np.unique(gl_states[:, 2])
@@ -99,12 +118,10 @@ def electric_12_term_site(
         # No n_l DOF -> H_E(1) and (2) are constants
         return QuantumCircuit(0)
     if np.amax(lvals) == 1:
-        circuit, regs = make_circuit(1, 'l0')
         # H_E^(1) + H_E^(2)
         circuit.p(-0.75 * time_step, regs['l0'][0])
         return circuit
 
-    circuit, regs = make_circuit(1, *[f'l{i}' for i in range(BOSONIC_QUBITS)])
     # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
     if BOSON_TRUNC == 3 and BOSONIC_QUBITS == 2:
         # Optimization specific for BOSON_TRUNC=3: there should never be a state (1, 1), so we
@@ -134,7 +151,7 @@ def electric_12_term(
     """
     conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
                                      max_right_flux=max_right_flux)
-    circuit, _ = make_circuit(num_sites, *[f'l{i}' for i in range(BOSONIC_QUBITS)])
+    circuit, _ = make_circuit(num_sites)
     for isite in range(num_sites - 1):
         site_circ = electric_12_term_site(time_step, **conditions[isite])
         embed_site_circuit(circuit, site_circ, isite)
@@ -144,7 +161,7 @@ def electric_12_term(
 
 def electric_3f_term_site(
     time_step: Number | ParameterExpression
-) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+) -> QuantumCircuit:
     r"""Fermionic part of the local electric (3) Hamiltonian.
 
     $$
@@ -152,7 +169,7 @@ def electric_3f_term_site(
     $$
     """
     # 3/4 * (1 - n_i) * n_o
-    circuit, regs = make_circuit(1, 'i', 'o')
+    circuit, regs = make_circuit(1)
     circuit.x(regs['i'][0])
     circuit.cp(-0.75 * time_step, regs['i'][0], regs['o'][0])
     circuit.x(regs['i'][0])
@@ -167,7 +184,7 @@ def electric_3f_term(
 
     Note that the electric Hamiltonian has terms only for sites [0, N-2].
     """
-    circuit, _ = make_circuit(num_sites - 1, 'i', 'o')
+    circuit, _ = make_circuit(num_sites - 1)
     site_circ = electric_3f_term_site(time_step)
     for isite in range(num_sites - 1):
         embed_site_circuit(circuit, site_circ, isite)
@@ -178,13 +195,14 @@ def electric_3b_term_site(
     time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1
-) -> tuple[QuantumCircuit, QubitPlacement, QubitPlacement]:
+) -> QuantumCircuit:
     r"""Fermion-boson part of the local electric (3) Hamiltonian.
 
     $$
     H_{E,b}^{(3)} = \frac{1}{2} n_{l}(r) n_{o}(r) (1 - n_{i}(r))
     $$
     """
+    circuit, regs = make_circuit(1)
     gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                 as_multi=True)
     lvals = np.unique(gl_states[:, 2])
@@ -192,20 +210,17 @@ def electric_3b_term_site(
         if lvals[0] == 0:
             return QuantumCircuit(0)
 
-        circuit, regs = make_circuit(1, 'i', 'o')
         circuit.x(regs['i'][0])
         circuit.cp(-0.5 * lvals[0] * time_step, regs['i'][0], regs['o'][1])
         circuit.x(regs['i'][0])
 
     elif np.amax(lvals) == 1:
-        circuit, regs = make_circuit(1, 'i', 'o', 'l0')
         coeffs = np.zeros((2, 2, 2))
         coeffs[1, 1, 0] = 0.5
         coeffs = diag_to_iz(coeffs)
         circuit.compose(parity_network(coeffs * time_step), inplace=True)
 
     else:
-        circuit, regs = make_circuit(1)
         circuit.x(regs['i'][0])
         circuit.append(RCCXGate(), [regs['i'][0], regs['o'][0], regs['a'][0]])
         # 1/2 * n_l as a (2,) * nq + (2,) array
@@ -409,7 +424,7 @@ def hopping_term_site(
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False
-):
+) -> QuantumCircuit:
     """Local hopping term."""
     config = hopping_term_config(term_type, max_left_flux, max_right_flux)
 
@@ -437,7 +452,7 @@ def hopping_term(
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False
-):
+) -> QuantumCircuit:
     """Full lattice hopping term for a given site parity (0 or 1) and term type (1 or 2)."""
     conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
                                      max_right_flux=max_right_flux, num_local=2)
@@ -456,7 +471,7 @@ def hopping_usvd(
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None
-):
+) -> QuantumCircuit:
     if config is None:
         config = hopping_term_config(term_type, max_left_flux, max_right_flux)
 
@@ -517,7 +532,7 @@ def hopping_diagonal_op(
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None
-):
+) -> tuple[np.ndarray, list[str]]:
     """Compute the diagonal term for the given term type and site number as a sum of Pauli products.
     """
     if config is None:
@@ -627,7 +642,7 @@ def hopping_diagonal_term(
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None
-):
+) -> QuantumCircuit:
     """Construct the circuit for the diagonal term.
 
     Using the hopping term config for the given boundary condition, identify the qubits that appear
