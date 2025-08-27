@@ -429,7 +429,6 @@ def hopping_term_config(
 
 def hopping_term_site(
     term_type: int,
-    parity: int,
     interaction_x: Number | ParameterExpression,
     time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
@@ -439,8 +438,8 @@ def hopping_term_site(
     """Local hopping term."""
     config = hopping_term_config(term_type, max_left_flux, max_right_flux)
 
-    usvd_circuit = hopping_usvd(term_type, parity, config=config)
-    diag_circuit = hopping_diagonal_term(term_type, parity, interaction_x, time_step, config=config)
+    usvd_circuit = hopping_usvd(term_type, config=config)
+    diag_circuit = hopping_diagonal_term(term_type, interaction_x, time_step, config=config)
 
     circuit, _ = make_circuit(2)
     circuit.compose(usvd_circuit, inplace=True)
@@ -469,7 +468,7 @@ def hopping_term(
                                      max_right_flux=max_right_flux, num_local=2)
     circuit, _ = make_circuit(num_sites)
     for isite in range(site_parity, num_sites - 1, 2):
-        site_circ = hopping_term_site(term_type, isite, interaction_x, time_step,
+        site_circ = hopping_term_site(term_type, interaction_x, time_step,
                                       with_barrier=with_barrier, **conditions[isite])
         embed_site_circuit(circuit, site_circ, [isite, isite + 1])
 
@@ -478,7 +477,6 @@ def hopping_term(
 
 def hopping_usvd(
     term_type: int,
-    parity: int,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None
@@ -487,37 +485,19 @@ def hopping_usvd(
         config = hopping_term_config(term_type, max_left_flux, max_right_flux)
 
     circuit, _ = make_circuit(2)
-
-    if (term_type, parity) in [(1, 0), (2, 1)]:
-        # x' as the SVD key qubit
-        circuit.x(config.qubits["x'"])
-        circuit.x(config.qubits["x"])
-        if config.boson_ops['p'][0] == 'X':
-            circuit.ccx(config.qubits["x'"], config.qubits["x"], config.qubits["p"])
-        elif config.boson_ops['p'][0] == 'lambda':
-            _hopping_usvd_decrementer(circuit, config.qubits, ["x'", "x"], "p")
-        circuit.x(config.qubits["x"])
-        circuit.cx(config.qubits["x'"], config.qubits["y'"])
-        if config.boson_ops['q'][0] == 'X':
-            circuit.ccx(config.qubits["x'"], config.qubits["y"], config.qubits["q"])
-        elif config.boson_ops['q'][0] == 'lambda':
-            _hopping_usvd_decrementer(circuit, config.qubits, ["x'", "y"], "q")
-        circuit.x(config.qubits["x'"])
-        circuit.h(config.qubits["x'"])
-    else:
-        # y' as the SVD key qubit
-        if config.boson_ops['q'][0] == 'X':
-            circuit.ccx(config.qubits["y'"], config.qubits["y"], config.qubits["q"])
-        elif config.boson_ops['q'][0] == 'lambda':
-            _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "y"], "q")
-        circuit.cx(config.qubits["y'"], config.qubits["x'"])
-        circuit.x(config.qubits["x"])
-        if config.boson_ops['p'][0] == 'X':
-            circuit.ccx(config.qubits["y'"], config.qubits["x"], config.qubits["p"])
-        elif config.boson_ops['q'][0] == 'lambda':
-            _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "x"], "p")
-        circuit.x(config.qubits["x"])
-        circuit.h(config.qubits["y'"])
+    # y' as the SVD key qubit
+    if config.boson_ops['q'][0] == 'X':
+        circuit.ccx(config.qubits["y'"], config.qubits["y"], config.qubits["q"])
+    elif config.boson_ops['q'][0] == 'lambda':
+        _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "y"], "q")
+    circuit.cx(config.qubits["y'"], config.qubits["x'"])
+    circuit.x(config.qubits["x"])
+    if config.boson_ops['p'][0] == 'X':
+        circuit.ccx(config.qubits["y'"], config.qubits["x"], config.qubits["p"])
+    elif config.boson_ops['q'][0] == 'lambda':
+        _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "x"], "p")
+    circuit.x(config.qubits["x"])
+    circuit.h(config.qubits["y'"])
 
     return circuit
 
@@ -537,32 +517,16 @@ def _hopping_usvd_decrementer(circuit, qubits, fermions, boson):
     circuit.append(RCCXGate(), [qubits[q] for q in fermions + [boson]])
 
 
-def hopping_diagonal_op(
-    term_type: int,
-    parity: int,
-    max_left_flux: int = BOSON_TRUNC - 1,
-    max_right_flux: int = BOSON_TRUNC - 1,
-    config: Optional[HoppingTermConfig] = None
-) -> tuple[np.ndarray, list[str]]:
-    """Compute the diagonal term for the given term type and site number as a sum of Pauli products.
-    """
-    if config is None:
-        config = hopping_term_config(term_type, max_left_flux, max_right_flux)
-
+def hopping_postusvd_states(
+    config: HoppingTermConfig
+) -> np.ndarray:
+    """Make a list of GL-satisfying states that the diagonal term sees."""
     # Pass the Gauss's law-satisfying states through the decrementers in Usvd
     states = config.gl_states.copy()
-    if (term_type, parity) in [(1, 0), (2, 1)]:
-        idx = config.indices["x'"]
-        mask_fp = states[:, idx] == 0
-        idx = config.indices["y'"]
-        states[mask_fp, idx] *= -1
-        states[mask_fp, idx] += 1
-    else:
-        idx = config.indices["y'"]
-        mask_fp = states[:, idx] == 1
-        idx = config.indices["x'"]
-        states[mask_fp, idx] *= -1
-        states[mask_fp, idx] += 1
+    mask_fp = states[:, config.indices["y'"]] == 1
+    idx = config.indices["x'"]
+    states[mask_fp, idx] *= -1
+    states[mask_fp, idx] += 1
 
     mask = mask_fp & (states[:, config.indices["y"]] == 1)
     idx = config.indices["q"]
@@ -581,6 +545,23 @@ def hopping_diagonal_op(
         states[mask, idx] *= -1
         states[mask, idx] += 1
 
+    return states
+
+
+def hopping_diagonal_op(
+    term_type: int,
+    max_left_flux: int = BOSON_TRUNC - 1,
+    max_right_flux: int = BOSON_TRUNC - 1,
+    config: Optional[HoppingTermConfig] = None
+) -> tuple[np.ndarray, list[str]]:
+    """Compute the diagonal term for the given term type and site number as a sum of Pauli products.
+    """
+    if config is None:
+        config = hopping_term_config(term_type, max_left_flux, max_right_flux)
+
+    # Pass the Gauss's law-satisfying states through the decrementers in Usvd
+    states = hopping_postusvd_states(config)
+
     # Apply the projectors and construct the diagonal operator
     # Start with the diagonal function
     diag_fn = np.sqrt((np.arange(BOSON_TRUNC)[:, None, None] + np.arange(1, 3)[None, :, None])
@@ -589,30 +570,19 @@ def hopping_diagonal_op(
     if config.boson_ops['p'][1] == 'id':
         # Diag op is expressed in terms of n_q
         axis_names = ['q']
-    elif config.boson_ops['q'][1] == 'id':
-        axis_names = ['p']
-    elif (term_type, parity) == (1, 0):
-        axis_names = ['q']
-    elif (term_type, parity) == (2, 0):
-        axis_names = ['p']
     else:
         axis_names = ['p']
     axis_names += ["x", "y", "x'", "y'"]
 
-    if (term_type, parity) in [(1, 0), (2, 1)]:
-        # Project onto y' == 0 and multiply Zx'
-        states = states[states[:, config.indices["y'"]] == 0]
-        diag_op *= np.expand_dims(np.array([1., 0.]), [0, 1, 2, 3])
-        diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 4])
-    else:
-        # Project onto x' == 1 and multiply Zy'
-        states = states[states[:, config.indices["x'"]] == 1]
-        diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
-        diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
+    # Project onto x' == 1 and multiply Zy'
+    states = states[states[:, config.indices["x'"]] == 1]
+    diag_op *= np.expand_dims(np.array([0., 1.]), [0, 1, 2, 4])
+    diag_op *= np.expand_dims(np.array([1., -1.]), [0, 1, 2, 3])
 
     # Zx
     diag_op *= np.expand_dims(np.array([1., -1.]), [0, 2, 3, 4])
 
+    # Apply the controlled projectors
     for boson, fermion, cval in [('p', 'x', 0), ('q', 'y', 1)]:
         projector = config.boson_ops[boson][1]
         if projector == 'id':
@@ -647,7 +617,6 @@ def hopping_diagonal_op(
 
 def hopping_diagonal_term(
     term_type: int,
-    parity: int,
     interaction_x: Number | ParameterExpression,
     time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
@@ -661,7 +630,7 @@ def hopping_diagonal_term(
     """
     if config is None:
         config = hopping_term_config(term_type, max_left_flux, max_right_flux)
-    diag_op, axis_names = hopping_diagonal_op(term_type, parity, max_left_flux=max_left_flux,
+    diag_op, axis_names = hopping_diagonal_op(term_type, max_left_flux=max_left_flux,
                                               max_right_flux=max_right_flux, config=config)
     # Multiply the diag_op with the physical parameters (can be Parameters)
     shape = diag_op.shape
