@@ -8,8 +8,8 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterExpression
 from .constants import BOSON_TRUNC, BOSONIC_QUBITS
 from .utils import QubitPlacement, op_matrix
-from .hamiltonian_static import (mass_term, electric_12_term, electric_3f_term, electric_3b_term,
-                                 hopping_term, boundary_conditions)
+from .hamiltonian_nn import (mass_term, electric_12_term, electric_3f_term, electric_3b_term,
+                             hopping_term, boundary_conditions)
 from .matrices import (mass_hamiltonian, electric_12_hamiltonian, electric_3f_hamiltonian,
                        electric_3b_hamiltonian, hopping_hamiltonian, nl_bounds)
 
