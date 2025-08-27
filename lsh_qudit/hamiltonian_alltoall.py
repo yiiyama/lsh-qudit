@@ -47,7 +47,7 @@ def prune_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
         reg, idx = circuit.find_bit(qubit).registers[0]
         names_qubits.append((reg.name, idx, qubit))
     names_qubits = sorted(names_qubits, key=lambda x: (x[1], REG_NAMES.index(x[0])))
-    qregs = [QuantumRegister(1, f'{name}.{isite}') for name, isite, _ in names_qubits]
+    qregs = [QuantumRegister(1, f'{name}({isite})') for name, isite, _ in names_qubits]
     qubit_to_reg = dict((nq[2], reg) for nq, reg in zip(names_qubits, qregs))
     pruned = QuantumCircuit(*qregs)
     for inst in circuit.data:
@@ -74,7 +74,7 @@ def mass_term_site(
     and has alternating signs depending on the parity of the site number.
     """
     sign = -1 + 2 * parity
-    circuit, regs = make_circuit(1)
+    circuit, regs = make_circuit(1, 'i', 'o')
     circuit.rz(sign * mass_mu * time_step, regs['i'])
     circuit.rz(sign * mass_mu * time_step, regs['o'])
     return circuit
@@ -110,7 +110,6 @@ def electric_12_term_site(
     \end{align}
     $$
     """
-    circuit, regs = make_circuit(1)
     gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                 as_multi=True)
     lvals = np.unique(gl_states[:, 2])
@@ -118,11 +117,13 @@ def electric_12_term_site(
         # No n_l DOF -> H_E(1) and (2) are constants
         return QuantumCircuit(0)
     if np.amax(lvals) == 1:
+        circuit, regs = make_circuit(1, 'l0')
         # H_E^(1) + H_E^(2)
         circuit.p(-0.75 * time_step, regs['l0'][0])
         return circuit
 
     # H_E^(1) + H_E^(2) = 1/2 n_l + 1/4 n_l^2
+    circuit, regs = make_circuit(1, *[f'l{i}' for i in range(BOSONIC_QUBITS)])
     if BOSON_TRUNC == 3 and BOSONIC_QUBITS == 2:
         # Optimization specific for BOSON_TRUNC=3: there should never be a state (1, 1), so we
         # can just make this a sum of local Zs
@@ -169,7 +170,7 @@ def electric_3f_term_site(
     $$
     """
     # 3/4 * (1 - n_i) * n_o
-    circuit, regs = make_circuit(1)
+    circuit, regs = make_circuit(1, 'i', 'o')
     circuit.x(regs['i'][0])
     circuit.cp(-0.75 * time_step, regs['i'][0], regs['o'][0])
     circuit.x(regs['i'][0])
@@ -202,7 +203,6 @@ def electric_3b_term_site(
     H_{E,b}^{(3)} = \frac{1}{2} n_{l}(r) n_{o}(r) (1 - n_{i}(r))
     $$
     """
-    circuit, regs = make_circuit(1)
     gl_states = physical_states(max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                 as_multi=True)
     lvals = np.unique(gl_states[:, 2])
@@ -210,17 +210,20 @@ def electric_3b_term_site(
         if lvals[0] == 0:
             return QuantumCircuit(0)
 
+        circuit, regs = make_circuit(1, 'i', 'o')
         circuit.x(regs['i'][0])
         circuit.cp(-0.5 * lvals[0] * time_step, regs['i'][0], regs['o'][1])
         circuit.x(regs['i'][0])
 
     elif np.amax(lvals) == 1:
+        circuit, regs = make_circuit(1, 'i', 'o', 'l0')
         coeffs = np.zeros((2, 2, 2))
         coeffs[1, 1, 0] = 0.5
         coeffs = diag_to_iz(coeffs)
         circuit.compose(parity_network(coeffs * time_step), inplace=True)
 
     else:
+        circuit, regs = make_circuit(1)
         circuit.x(regs['i'][0])
         circuit.append(RCCXGate(), [regs['i'][0], regs['o'][0], regs['a'][0]])
         # 1/2 * n_l as a (2,) * nq + (2,) array
