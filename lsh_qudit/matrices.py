@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from .utils import op_matrix
 from .constants import (BOSON_TRUNC, BOSONIC_QUBITS, BDIM, cincrp, ocincrp, pauliz, sigmaplus,
                         sigmaminus)
-from .hamiltonian import boundary_conditions
+from .agl import boundary_conditions
 
 
 def mass_site_hamiltonian(
@@ -56,7 +56,7 @@ def electric_12_site_hamiltonian(
 
     nl = np.arange(dim)
     nl[nmax + 1:] = 0
-    diags = (nl / 2. + nl * nl / 4.)
+    diags = nl / 2. + nl * nl / 4.
     return npmod.diagflat(diags).astype(np.complex128)
 
 
