@@ -3,8 +3,7 @@ from dataclasses import dataclass
 from numbers import Number
 from typing import Optional
 import numpy as np
-from qiskit import QuantumCircuit
-from qiskit.circuit import ParameterExpression
+from qiskit.circuit import ParameterExpression, QuantumCircuit
 # from qiskit.circuit.library import RCCXGate
 from .set_rccx_inverse import RCCXGate
 from .constants import BOSON_TRUNC, BOSONIC_QUBITS
