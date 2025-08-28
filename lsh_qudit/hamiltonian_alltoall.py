@@ -38,8 +38,9 @@ def embed_site_circuit(
     full_circ.compose(site_circ, qubits=qubit_mapping, inplace=True)
 
 
-def prune_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
+def prune_circuit(circuit: QuantumCircuit, site_idx: Optional[list[int]] = None) -> QuantumCircuit:
     """Drop unused qubits from the circuit and rename the registers."""
+    site_idx = site_idx or list(range(circuit.qregs[0].size))
     used_qubits = set()
     for inst in circuit.data:
         if inst.operation.name == 'barrier':
@@ -48,7 +49,7 @@ def prune_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
     names_qubits = []
     for qubit in used_qubits:
         reg, idx = circuit.find_bit(qubit).registers[0]
-        names_qubits.append((reg.name, idx, qubit))
+        names_qubits.append((reg.name, site_idx[idx], qubit))
     names_qubits = sorted(names_qubits, key=lambda x: (x[1], REG_NAMES.index(x[0])))
     qregs = [QuantumRegister(1, f'{name}({isite})') for name, isite, _ in names_qubits]
     qubit_to_reg = dict((nq[2], reg) for nq, reg in zip(names_qubits, qregs))
@@ -487,16 +488,18 @@ def hopping_usvd(
 
     circuit, _ = make_circuit(2)
     # y' as the SVD key qubit
-    if config.boson_ops['q'][0] == 'X':
-        circuit.ccx(config.qubits["y'"], config.qubits["y"], config.qubits["q"])
-    elif config.boson_ops['q'][0] == 'lambda':
-        _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "y"], "q")
+    match config.boson_ops['q'][0]:
+        case 'X':
+            circuit.ccx(config.qubits["y'"], config.qubits["y"], config.qubits["q"])
+        case 'lambda':
+            _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "y"], "q")
     circuit.cx(config.qubits["y'"], config.qubits["x'"])
     circuit.x(config.qubits["x"])
-    if config.boson_ops['p'][0] == 'X':
-        circuit.ccx(config.qubits["y'"], config.qubits["x"], config.qubits["p"])
-    elif config.boson_ops['q'][0] == 'lambda':
-        _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "x"], "p")
+    match config.boson_ops['p'][0]:
+        case 'X':
+            circuit.ccx(config.qubits["y'"], config.qubits["x"], config.qubits["p"])
+        case 'lambda':
+            _hopping_usvd_decrementer(circuit, config.qubits, ["y'", "x"], "p")
     circuit.x(config.qubits["x"])
     circuit.h(config.qubits["y'"])
 

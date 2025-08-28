@@ -1,18 +1,22 @@
 """Functions to manage AGL and boundary conditions."""
 import numpy as np
-from .constants import BOSON_TRUNC
+from .constants import BOSON_TRUNC, BOSONIC_QUBITS
 
 
 def physical_states(
     num_sites: int = 1,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
-    as_multi: bool = False
+    as_multi: bool = False,
+    boson_binary: bool = False
 ) -> np.ndarray:
     """Returns an array of AGL-satisfying states with optional boundary conditions.
 
     When as_multi=True, a 2-dimensional array is returned with the inner dimension corresponding
     to occupation numbers in the (i, o, l) order in the increasing site number.
+
+    When boson_binary=True, the bosonic register is broken down into BOSONIC_QUBITS qubits and
+    binarized. Binary digits are ordered from least significant to most significant (left to right).
     """
     shape = (2, 2, BOSON_TRUNC) * num_sites
     states = np.array(np.unravel_index(np.arange(np.prod(shape)), shape)).T
@@ -32,6 +36,19 @@ def physical_states(
         for val in range(max_right_flux + 1):
             mask |= np.equal((1 - states[:, -3]) * states[:, -2] + states[:, -1], val)
         states = states[mask]
+
+    if boson_binary:
+        shape = ((2, 2,) + (2,) * BOSONIC_QUBITS) * num_sites
+        size_per_site = 2 + BOSONIC_QUBITS
+        states_binarized = np.empty((states.shape[0], len(shape)), dtype=states.dtype)
+        states_binarized[:, 0::size_per_site] = states[:, 0::3]
+        states_binarized[:, 1::size_per_site] = states[:, 1::3]
+        shifts = np.arange(BOSONIC_QUBITS).reshape(1, -1)
+        for isite in range(num_sites):
+            i0, i1 = isite * size_per_site + 2, (isite + 1) * size_per_site
+            ib = isite * 3 + 2
+            states_binarized[:, i0:i1] = (states[:, ib:ib + 1] >> shifts) % 2
+        states = states_binarized
 
     if as_multi:
         return states
