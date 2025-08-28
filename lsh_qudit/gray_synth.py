@@ -38,7 +38,11 @@ def gray_synth(
     terminal = num_qubits == 1
     # Check for a constant-Z qubit
     for target in range(num_qubits):
-        if np.allclose(np.moveaxis(angles, -1 - target, 0)[0], 0.):
+        # Using all(is_zero) instead of np.all to allow parameter expressions in entries
+        # Also need to wrap with asarray to ensure object arrays are converted back to arrays after
+        # dereferencing with [0]
+        entry_i = np.asarray(np.moveaxis(angles, -1 - target, 0)[0]).reshape(-1)
+        if all(is_zero(v) for v in entry_i):
             terminal = True
             break
 
@@ -101,6 +105,7 @@ def gray_synth_with_ancilla(
     Returns:
         A list of 2-tuples (CX control qubit, Rz angle or None).
     """
+    angles = np.asarray(angles)
     num_data_qubits = len(angles.shape)
     if num_data_qubits == 0:
         return [(None, 2. * angles)]

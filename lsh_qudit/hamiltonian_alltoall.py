@@ -6,10 +6,10 @@ import numpy as np
 from qiskit.circuit import ParameterExpression, QuantumCircuit, QuantumRegister, Qubit
 from qiskit.circuit.library import Barrier
 from .set_rccx_inverse import RCCXGate
-from .constants import BOSON_TRUNC, BOSONIC_QUBITS
+from .constants import BOSON_TRUNC, BOSONIC_QUBITS, GRAY_SYNTH_PARALLEL
 from .agl import physical_states, boundary_conditions
 from .utils import diag_to_iz
-from .parity_network import parity_network
+from .gray_synth import gray_synth
 
 REG_NAMES = ['i', 'o', 'a'] + [f'l{i}' for i in range(BOSONIC_QUBITS)]
 
@@ -138,12 +138,13 @@ def electric_12_term_site(
         circuit.p(-0.75 * time_step, regs['l0'][0])
         circuit.p(-2. * time_step, regs['l1'][0])
     else:
-        # Otherwise construct a parity network circuit
+        # Otherwise construct a diagonal unitary circuit
         coeffs = np.zeros(2 ** BOSONIC_QUBITS)
         nl = np.arange(BOSON_TRUNC)
         coeffs[:BOSON_TRUNC] = 0.5 * nl + 0.25 * np.square(nl)
         coeffs = coeffs.reshape((2,) * BOSONIC_QUBITS)
-        circuit.compose(parity_network(diag_to_iz(coeffs) * time_step), inplace=True)
+        diag_block = gray_synth(diag_to_iz(coeffs) * time_step, parallel=GRAY_SYNTH_PARALLEL)
+        circuit.compose(diag_block, inplace=True)
 
     return circuit
 
@@ -227,8 +228,8 @@ def electric_3b_term_site(
         circuit, regs = make_circuit(1, 'i', 'o', 'l0')
         coeffs = np.zeros((2, 2, 2))
         coeffs[1, 1, 0] = 0.5
-        coeffs = diag_to_iz(coeffs)
-        circuit.compose(parity_network(coeffs * time_step), inplace=True)
+        diag_block = gray_synth(diag_to_iz(coeffs) * time_step, parallel=GRAY_SYNTH_PARALLEL)
+        circuit.compose(diag_block, inplace=True)
 
     else:
         circuit, regs = make_circuit(1)
@@ -238,9 +239,9 @@ def electric_3b_term_site(
         coeffs = np.zeros((2 ** BOSONIC_QUBITS, 2))
         coeffs[:BOSON_TRUNC, 1] = 0.5 * np.arange(BOSON_TRUNC)
         coeffs = coeffs.reshape((2,) * (BOSONIC_QUBITS + 1))
-        circuit.compose(parity_network(diag_to_iz(coeffs) * time_step),
-                        qubits=[regs['a'][0]] + [regs[f'l{i}'][0] for i in range(BOSONIC_QUBITS)],
-                        inplace=True)
+        diag_block = gray_synth(diag_to_iz(coeffs) * time_step, parallel=GRAY_SYNTH_PARALLEL)
+        qubit_mapping = [regs['a'][0]] + [regs[f'l{i}'][0] for i in range(BOSONIC_QUBITS)]
+        circuit.compose(diag_block, qubits=qubit_mapping, inplace=True)
         circuit.append(RCCXGate(), [regs['i'][0], regs['o'][0], regs['a'][0]])
         circuit.x(regs['i'][0])
 
@@ -638,8 +639,8 @@ def hopping_diagonal_term(
     diag_op = diag_op.reshape(shape)
 
     circuit, _ = make_circuit(2)
-    circ = parity_network(diag_to_iz(diag_op))
+    diag_block = gray_synth(diag_to_iz(diag_op), parallel=GRAY_SYNTH_PARALLEL)
     qubit_mapping = [config.qubits[name] for name in axis_names[::-1]]
-    circuit.compose(circ, qubits=qubit_mapping, inplace=True)
+    circuit.compose(diag_block, qubits=qubit_mapping, inplace=True)
 
     return circuit

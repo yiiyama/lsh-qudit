@@ -5,6 +5,8 @@ import numpy as np
 BOSON_TRUNC = 3
 BOSONIC_QUBITS = 2
 
+GRAY_SYNTH_PARALLEL = True
+
 sqrt2 = np.sqrt(2.)
 sqrt3 = np.sqrt(3.)
 
