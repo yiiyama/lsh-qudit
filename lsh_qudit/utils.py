@@ -169,9 +169,13 @@ def _op_matrix(op, shape, qubits, npmod):
 _op_matrix_jit = jax.jit(partial(_op_matrix, npmod=jnp), static_argnums=[1, 2])
 
 
-def clean_array(arr):
-    return (np.where(np.isclose(arr.real, 0.), 0., arr.real)
-            + 1.j * np.where(np.isclose(arr.imag, 0.), 0., arr.imag))
+def clean_array(arr, rtol=1.e-5, atol=1.e-8):
+    cleaned = np.where(np.isclose(arr.real, 0., rtol=rtol, atol=atol),
+                       0., arr.real).astype(arr.dtype)
+    if arr.dtype == np.complex128:
+        cleaned += np.where(np.isclose(arr.imag, 0., rtol=rtol, atol=atol),
+                            0., arr.imag) * 1.j
+    return cleaned
 
 
 def diag_to_iz(arr):
@@ -186,3 +190,10 @@ def diag_to_iz(arr):
 
 def to_bin(idx, nbits):
     return tuple((idx >> np.arange(nbits)[::-1]) % 2)
+
+
+def is_zero(angle):
+    try:
+        return np.isclose(angle, 0.)
+    except TypeError:
+        return bool(angle.sympify().is_zero)

@@ -2,7 +2,7 @@
 from typing import Optional
 import numpy as np
 from qiskit import QuantumCircuit
-from .utils import to_bin
+from .utils import to_bin, is_zero
 
 
 class ParityTracer:
@@ -52,13 +52,6 @@ class ParityTracer:
     def swap(self, q1: int, q2: int):
         self.circuit.swap(q1, q2)
         self.parities[[q1, q2]] = self.parities[[q2, q1]]
-
-
-def is_zero(angle):
-    try:
-        return np.isclose(angle, 0.)
-    except TypeError:
-        return bool(angle.sympify().is_zero)
 
 
 def parity_network(
