@@ -195,7 +195,7 @@ def electric_3f_term(
 
     Note that the electric Hamiltonian has terms only for sites [0, N-2].
     """
-    circuit, _ = make_circuit(num_sites - 1)
+    circuit, _ = make_circuit(num_sites)
     site_circ = electric_3f_term_site(time_step)
     for isite in range(num_sites - 1):
         embed_site_circuit(circuit, site_circ, isite)
@@ -262,7 +262,7 @@ def electric_3b_term(
     conditions = boundary_conditions(num_sites, max_left_flux=max_left_flux,
                                      max_right_flux=max_right_flux)
 
-    circuit, _ = make_circuit(num_sites - 1)
+    circuit, _ = make_circuit(num_sites)
     for isite in range(num_sites - 1):
         site_circ = electric_3b_term_site(time_step, **conditions[isite])
         embed_site_circuit(circuit, site_circ, isite)
