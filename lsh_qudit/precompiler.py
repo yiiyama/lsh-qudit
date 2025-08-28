@@ -279,8 +279,7 @@ class Merge3QAnd2QGates(TransformationPass):
         return True
 
     def _replace_swapcx_ccz(self, dag: DAGCircuit, ccz_node: DAGOpNode, out_incr: int):
-        qreg = list(dag.qregs.values())[0]
-        ordered_qargs = sorted(ccz_node.qargs, key=qreg.index)
+        ordered_qargs = sorted(ccz_node.qargs, key=lambda q: dag.find_bit(q).index)
         nodes_on_cent = list(dag.nodes_on_wire(ordered_qargs[1], only_ops=True))
         ccz_node_idx = nodes_on_cent.index(ccz_node)
         if out_incr > 0:
