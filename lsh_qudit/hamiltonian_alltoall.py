@@ -66,9 +66,9 @@ def prune_circuit(circuit: QuantumCircuit, site_idx: Optional[list[int]] = None)
 
 
 def mass_term_site(
+    time_step: Number | ParameterExpression,
     parity: int,
-    mass_mu: Number | ParameterExpression,
-    time_step: Number | ParameterExpression
+    mass_mu: Number | ParameterExpression
 ) -> QuantumCircuit:
     r"""Local mass term circuit.
 
@@ -91,13 +91,13 @@ def mass_term_site(
 
 def mass_term(
     num_sites: int,
-    mass_mu: Number | ParameterExpression,
-    time_step: Number | ParameterExpression
+    time_step: Number | ParameterExpression,
+    mass_mu: Number | ParameterExpression
 ) -> QuantumCircuit:
     """Mass term for the full lattice."""
     circuit, _ = make_circuit(num_sites)
     for isite in range(num_sites):
-        site_circ = mass_term_site(isite % 2, mass_mu, time_step)
+        site_circ = mass_term_site(time_step, isite % 2, mass_mu)
         embed_site_circuit(circuit, site_circ, isite)
 
     return circuit
@@ -430,9 +430,9 @@ def hopping_term_config(
 
 
 def hopping_term_site(
+    time_step: Number | ParameterExpression,
     term_type: int,
     interaction_x: Number | ParameterExpression,
-    time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False
@@ -441,7 +441,7 @@ def hopping_term_site(
     config = hopping_term_config(term_type, max_left_flux, max_right_flux)
 
     usvd_circuit = hopping_usvd(term_type, config=config)
-    diag_circuit = hopping_diagonal_term(term_type, interaction_x, time_step, config=config)
+    diag_circuit = hopping_diagonal_term(time_step, term_type, interaction_x, config=config)
 
     circuit, _ = make_circuit(2)
     circuit.compose(usvd_circuit, inplace=True)
@@ -457,10 +457,10 @@ def hopping_term_site(
 
 def hopping_term(
     num_sites: int,
+    time_step: Number | ParameterExpression,
     site_parity: int,
     term_type: int,
     interaction_x: Number | ParameterExpression,
-    time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False
@@ -470,7 +470,7 @@ def hopping_term(
                                      max_right_flux=max_right_flux, num_local=2)
     circuit, _ = make_circuit(num_sites)
     for isite in range(site_parity, num_sites - 1, 2):
-        site_circ = hopping_term_site(term_type, interaction_x, time_step,
+        site_circ = hopping_term_site(time_step, term_type, interaction_x,
                                       with_barrier=with_barrier, **conditions[isite])
         embed_site_circuit(circuit, site_circ, [isite, isite + 1])
 
@@ -620,9 +620,9 @@ def hopping_diagonal_op(
 
 
 def hopping_diagonal_term(
+    time_step: Number | ParameterExpression,
     term_type: int,
     interaction_x: Number | ParameterExpression,
-    time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     config: Optional[HoppingTermConfig] = None

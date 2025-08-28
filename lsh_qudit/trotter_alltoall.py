@@ -15,9 +15,9 @@ from .matrices import (mass_hamiltonian, electric_12_hamiltonian, electric_3f_ha
 
 def trotter_step_circuit(
     num_sites: int,
+    time_step: Number | ParameterExpression,
     mass_mu: Number | ParameterExpression,
     interaction_x: Number | ParameterExpression,
-    time_step: Number | ParameterExpression,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     with_barrier: bool = False,
@@ -30,140 +30,65 @@ def trotter_step_circuit(
     else:
         dt = time_step
 
+    def compose(term_fn, *args, **kwargs):
+        _dt = kwargs.get('_dt', dt)
+        full_circuit.compose(
+            term_fn(num_sites, _dt, *args, **kwargs),
+            inplace=True
+        )
+        if with_barrier:
+            full_circuit.barrier()
+
     # H_M
-    full_circuit.compose(
-        mass_term(num_sites, mass_mu, dt),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(mass_term, mass_mu)
     # H_E[1] + H_E[2]
-    full_circuit.compose(
-        electric_12_term(num_sites, dt, max_left_flux, max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(electric_12_term, max_left_flux, max_right_flux)
     # H_E[3] bosonic
-    full_circuit.compose(
-        electric_3b_term(num_sites, dt, max_left_flux, max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(electric_3b_term, max_left_flux, max_right_flux)
     # H_I[1](r even)
-    full_circuit.compose(
-        hopping_term(num_sites, 0, 1, interaction_x, dt, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier)
     # H_I[2](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 2, interaction_x, dt, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier)
     # H_E[3] fermionc
-    full_circuit.compose(
-        electric_3f_term(num_sites, dt),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(electric_3f_term)
     # H_I[1](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 1, interaction_x, dt, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier)
     # H_I[2](r even)
-    full_circuit.compose(
-        hopping_term(num_sites, 0, 2, interaction_x, time_step, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
+    compose(hopping_term, 0, 2, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier, _dt=time_step)
 
     if not second_order:
         return full_circuit
 
     # H_I[1](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 1, interaction_x, dt, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier)
     # H_E[3] fermionc
-    full_circuit.compose(
-        electric_3f_term(num_sites, dt),
-        inplace=True
-    )
-
+    compose(electric_3f_term)
     # H_E[3] bosonic
-    full_circuit.compose(
-        electric_3b_term(num_sites, dt, max_left_flux, max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(electric_3b_term, max_left_flux, max_right_flux)
     # H_I[2](r odd)
-    full_circuit.compose(
-        hopping_term(num_sites, 1, 2, interaction_x, dt, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier)
     # H_I[1](r even)
-    full_circuit.compose(
-        hopping_term(num_sites, 0, 1, interaction_x, dt, max_left_flux, max_right_flux,
-                     with_barrier=with_barrier),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux,
+            with_barrier=with_barrier)
     # H_E[1] + H_E[2]
-    full_circuit.compose(
-        electric_12_term(num_sites, dt, max_left_flux, max_right_flux),
-        inplace=True
-    )
-    if with_barrier:
-        full_circuit.barrier()
-
+    compose(electric_12_term, max_left_flux, max_right_flux)
     # H_M
-    full_circuit.compose(
-        mass_term(num_sites, mass_mu, dt),
-        inplace=True
-    )
+    compose(mass_term, mass_mu)
 
     return full_circuit
 
 
 def trotter_step_unitary(
     num_sites: int,
-    time_step: Number,
-    mass_mu: Number,
-    interaction_x: Number,
+    mass_mu: float,
+    interaction_x: float,
+    time_step: float,
     max_left_flux: int = BOSON_TRUNC - 1,
     max_right_flux: int = BOSON_TRUNC - 1,
     second_order: bool = False,
@@ -186,13 +111,13 @@ def trotter_step_unitary(
     else:
         dt = time_step
 
-    # HM
+    # H_M
     hmat = mass_hamiltonian(num_sites, mass_mu, npmod=npmod)
     umat_local = expm(-1.j * hmat * dt)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites))[::-1]), ())
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
-    # HE[12]
+    # H_E[1] + H_E[2]
     hmat = electric_12_hamiltonian(num_sites,
                                    max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                    npmod=npmod)
@@ -203,22 +128,7 @@ def trotter_step_unitary(
             subsystems_r += (3 * site + 2,)
     umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
 
-    # HI[1](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 1, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    umat = umat_local @ umat
-
-    # HI[2](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 2, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
-    # HE[3]
+    # H_E[3] bosonic
     hmat = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
                                    max_right_flux=max_right_flux, npmod=npmod)
     umat_local = expm(-1.j * hmat * dt)
@@ -228,19 +138,35 @@ def trotter_step_unitary(
             subsystems_r += tuple(range(3 * site, 3 * (site + 1)))
     umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
 
+    # H_I[1](r even)
+    hmat = hopping_hamiltonian(num_sites, 0, 1, interaction_x,
+                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                               npmod=npmod)
+    umat_local = expm(-1.j * hmat * dt)
+    umat = umat_local @ umat
+
+    # H_I[2](r odd)
+    hmat = hopping_hamiltonian(num_sites, 1, 2, interaction_x,
+                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+                               npmod=npmod)
+    umat_local = expm(-1.j * hmat * dt)
+    subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
+    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
+
+    # H_E[3] fermionic
     hmat = electric_3f_hamiltonian(num_sites, npmod=npmod)
     umat_local = expm(-1.j * hmat * dt)
     subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites - 1))[::-1]), ())
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
-    # HI[1](r odd)
+    # H_I[1](r odd)
     hmat = hopping_hamiltonian(num_sites, 1, 1, interaction_x, max_left_flux=max_left_flux,
                                max_right_flux=max_right_flux, npmod=npmod)
     umat_local = expm(-1.j * hmat * dt)
     subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
-    # HI[2](r even)
+    # H_I[2](r even)
     hmat = hopping_hamiltonian(num_sites, 0, 2, interaction_x,
                                max_left_flux=max_left_flux, max_right_flux=max_right_flux,
                                npmod=npmod)
@@ -250,14 +176,14 @@ def trotter_step_unitary(
     if not second_order:
         return umat
 
-    # HI[1](r odd)
+    # H_I[1](r odd)
     hmat = hopping_hamiltonian(num_sites, 1, 1, interaction_x, max_left_flux=max_left_flux,
                                max_right_flux=max_right_flux, npmod=npmod)
     umat_local = expm(-1.j * hmat * dt)
     subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
     umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
 
-    # HE[3]
+    # H_E[3]
     hmat = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
                                    max_right_flux=max_right_flux, npmod=npmod)
     umat_local = expm(-1.j * hmat * dt)
