@@ -636,6 +636,14 @@ def hopping_diagonal_term(
         config = hopping_term_config(term_type, max_left_flux, max_right_flux)
     diag_op, axis_names = hopping_diagonal_op(term_type, max_left_flux=max_left_flux,
                                               max_right_flux=max_right_flux, config=config)
+    if diag_op.shape[0] > 2:
+        qubitized = np.zeros((2,) * (BOSONIC_QUBITS + 4), dtype=diag_op.dtype)
+        for il in range(BOSON_TRUNC):
+            qidx = tuple((il >> np.arange(BOSONIC_QUBITS)[::-1]) % 2)
+            qubitized[qidx] = diag_op[il]
+        diag_op = qubitized
+        axis_names = [f'{axis_names[0]}d{i}' for i in range(BOSONIC_QUBITS)][::-1] + axis_names[1:]
+
     # Multiply the diag_op with the physical parameters (can be Parameters)
     shape = diag_op.shape
     diag_op = np.array([interaction_x * time_step * c for c in diag_op.reshape(-1)])
