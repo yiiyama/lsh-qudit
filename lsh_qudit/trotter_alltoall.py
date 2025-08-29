@@ -48,30 +48,24 @@ def trotter_step_circuit(
     # H_E[3] bosonic
     compose(electric_3b_term, max_left_flux, max_right_flux)
     # H_I[1](r even)
-    compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier)
+    compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux)
     # H_I[2](r odd)
-    compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier)
+    compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux)
     # H_I[1](r odd)
-    compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier)
+    compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux)
     # H_I[2](r even)
     compose(hopping_term, 0, 2, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier, _dt=time_step)
+            _dt=time_step)
 
     if not second_order:
         return circuit
 
     # H_I[1](r odd)
-    compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier)
+    compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux)
     # H_I[2](r odd)
-    compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier)
+    compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux)
     # H_I[1](r even)
-    compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux,
-            with_barrier=with_barrier)
+    compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux)
     # H_E[3] bosonic
     compose(electric_3b_term, max_left_flux, max_right_flux)
     # H_E[3] fermionc
