@@ -23,7 +23,7 @@ def trotter_step_circuit(
     with_barrier: bool = False,
     second_order: bool = False
 ) -> QuantumCircuit:
-    full_circuit, _ = make_circuit(num_sites)
+    circuit, _ = make_circuit(num_sites)
 
     if second_order:
         dt = time_step * 0.5
@@ -31,18 +31,20 @@ def trotter_step_circuit(
         dt = time_step
 
     def compose(term_fn, *args, **kwargs):
-        _dt = kwargs.get('_dt', dt)
-        full_circuit.compose(
+        _dt = kwargs.pop('_dt', dt)
+        circuit.compose(
             term_fn(num_sites, _dt, *args, **kwargs),
             inplace=True
         )
         if with_barrier:
-            full_circuit.barrier()
+            circuit.barrier()
 
     # H_M
     compose(mass_term, mass_mu)
     # H_E[1] + H_E[2]
     compose(electric_12_term, max_left_flux, max_right_flux)
+    # H_E[3] fermionc
+    compose(electric_3f_term)
     # H_E[3] bosonic
     compose(electric_3b_term, max_left_flux, max_right_flux)
     # H_I[1](r even)
@@ -51,8 +53,6 @@ def trotter_step_circuit(
     # H_I[2](r odd)
     compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux,
             with_barrier=with_barrier)
-    # H_E[3] fermionc
-    compose(electric_3f_term)
     # H_I[1](r odd)
     compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux,
             with_barrier=with_barrier)
@@ -61,27 +61,27 @@ def trotter_step_circuit(
             with_barrier=with_barrier, _dt=time_step)
 
     if not second_order:
-        return full_circuit
+        return circuit
 
     # H_I[1](r odd)
     compose(hopping_term, 1, 1, interaction_x, max_left_flux, max_right_flux,
             with_barrier=with_barrier)
-    # H_E[3] fermionc
-    compose(electric_3f_term)
-    # H_E[3] bosonic
-    compose(electric_3b_term, max_left_flux, max_right_flux)
     # H_I[2](r odd)
     compose(hopping_term, 1, 2, interaction_x, max_left_flux, max_right_flux,
             with_barrier=with_barrier)
     # H_I[1](r even)
     compose(hopping_term, 0, 1, interaction_x, max_left_flux, max_right_flux,
             with_barrier=with_barrier)
+    # H_E[3] bosonic
+    compose(electric_3b_term, max_left_flux, max_right_flux)
+    # H_E[3] fermionc
+    compose(electric_3f_term)
     # H_E[1] + H_E[2]
     compose(electric_12_term, max_left_flux, max_right_flux)
     # H_M
     compose(mass_term, mass_mu)
 
-    return full_circuit
+    return circuit
 
 
 def trotter_step_unitary(
@@ -111,123 +111,79 @@ def trotter_step_unitary(
     else:
         dt = time_step
 
+    def compose(hmat_fn, qubits, *args, **kwargs):
+        nonlocal umat
+        _dt = kwargs.pop('_dt', dt)
+        hmat = hmat_fn(num_sites, *args, npmod=npmod, **kwargs)
+        umat_local = expm(-1.j * hmat * _dt)
+        if qubits:
+            qubits = tuple(sorted(qubits, reverse=True))
+            umat_local = op_matrix(umat_local, shape, qubits, npmod=npmod)
+        umat = umat_local @ umat
+
     # H_M
-    hmat = mass_hamiltonian(num_sites, mass_mu, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites))[::-1]), ())
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
+    qubits = list(range(0, 3 * num_sites, 3)) + list(range(1, 3 * num_sites, 3))
+    compose(mass_hamiltonian, qubits, mass_mu)
     # H_E[1] + H_E[2]
-    hmat = electric_12_hamiltonian(num_sites,
-                                   max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                                   npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems_r = ()
-    for site in range(num_sites - 1):
-        if shape[::-1][3 * site + 2] != 1:
-            subsystems_r += (3 * site + 2,)
-    umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
-
-    # H_E[3] bosonic
-    hmat = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
-                                   max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems_r = ()
-    for site in range(num_sites - 1):
-        if shape[::-1][3 * site + 2] != 1:
-            subsystems_r += tuple(range(3 * site, 3 * (site + 1)))
-    umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
-
-    # H_I[1](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 1, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    umat = umat_local @ umat
-
-    # H_I[2](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 2, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
+    qubits = list(range(2, 3 * num_sites - 3, 3))
+    compose(electric_12_hamiltonian, qubits,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
     # H_E[3] fermionic
-    hmat = electric_3f_hamiltonian(num_sites, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites - 1))[::-1]), ())
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
+    qubits = list(range(0, 3 * num_sites - 3, 3)) + list(range(1, 3 * num_sites - 3, 3))
+    compose(electric_3f_hamiltonian, qubits)
+    # H_E[3] bosonic
+    qubits = []
+    for site in range(num_sites - 1):
+        if shape[::-1][3 * site + 2] != 1:
+            qubits += list(range(3 * site, 3 * (site + 1)))
+    compose(electric_3b_hamiltonian, qubits,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_I[1](r even)
+    compose(hopping_hamiltonian, None, 0, 1, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_I[2](r odd)
+    qubits = list(range(3, 3 * (num_sites - 1)))
+    compose(hopping_hamiltonian, qubits, 1, 2, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
     # H_I[1](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 1, interaction_x, max_left_flux=max_left_flux,
-                               max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
+    qubits = list(range(3, 3 * (num_sites - 1)))
+    compose(hopping_hamiltonian, qubits, 1, 1, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
     # H_I[2](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 2, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * time_step)
-    umat = umat_local @ umat
+    compose(hopping_hamiltonian, None, 0, 2, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux,
+            _dt=time_step)
 
     if not second_order:
         return umat
 
     # H_I[1](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 1, interaction_x, max_left_flux=max_left_flux,
-                               max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
-    # H_E[3]
-    hmat = electric_3b_hamiltonian(num_sites, max_left_flux=max_left_flux,
-                                   max_right_flux=max_right_flux, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems_r = ()
+    qubits = list(range(3, 3 * (num_sites - 1)))
+    compose(hopping_hamiltonian, qubits, 1, 1, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_I[2](r odd)
+    qubits = list(range(3, 3 * (num_sites - 1)))
+    compose(hopping_hamiltonian, qubits, 1, 2, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_I[1](r even)
+    compose(hopping_hamiltonian, None, 0, 1, interaction_x,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_E[3] bosonic
+    qubits = []
     for site in range(num_sites - 1):
         if shape[::-1][3 * site + 2] != 1:
-            subsystems_r += tuple(range(3 * site, 3 * (site + 1)))
-    umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
-
-    hmat = electric_3f_hamiltonian(num_sites, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites - 1))[::-1]), ())
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
-    # HI[2](r odd)
-    hmat = hopping_hamiltonian(num_sites, 1, 2, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = tuple(range(3, 3 * (num_sites - 1)))[::-1]
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
-
-    # HI[1](r even)
-    hmat = hopping_hamiltonian(num_sites, 0, 1, interaction_x,
-                               max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                               npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    umat = umat_local @ umat
-
-    # HE[12]
-    hmat = electric_12_hamiltonian(num_sites,
-                                   max_left_flux=max_left_flux, max_right_flux=max_right_flux,
-                                   npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems_r = ()
-    for site in range(num_sites - 1):
-        if shape[::-1][3 * site + 2] != 1:
-            subsystems_r += (3 * site + 2,)
-    umat = op_matrix(umat_local, shape, subsystems_r[::-1], npmod=npmod) @ umat
-
-    # HM
-    hmat = mass_hamiltonian(num_sites, mass_mu, npmod=npmod)
-    umat_local = expm(-1.j * hmat * dt)
-    subsystems = sum(((3 * site + 1, 3 * site) for site in list(range(num_sites))[::-1]), ())
-    umat = op_matrix(umat_local, shape, subsystems, npmod=npmod) @ umat
+            qubits += list(range(3 * site, 3 * (site + 1)))
+    compose(electric_3b_hamiltonian, qubits,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_E[3] fermionic
+    qubits = list(range(0, 3 * num_sites - 3, 3)) + list(range(1, 3 * num_sites - 3, 3))
+    compose(electric_3f_hamiltonian, qubits)
+    # H_E[1] + H_E[2]
+    qubits = list(range(2, 3 * num_sites - 3, 3))
+    compose(electric_12_hamiltonian, qubits,
+            max_left_flux=max_left_flux, max_right_flux=max_right_flux)
+    # H_M
+    qubits = list(range(0, 3 * num_sites, 3)) + list(range(1, 3 * num_sites, 3))
+    compose(mass_hamiltonian, qubits, mass_mu)
 
     return umat
